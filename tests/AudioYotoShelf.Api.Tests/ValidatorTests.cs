@@ -62,7 +62,7 @@ public class ValidatorTests
     [Fact]
     public void Transfer_MinOverMax_Fails() =>
         _transferValidator.TestValidate(new CreateTransferRequest("item-1", OverrideMinAge: 10, OverrideMaxAge: 5))
-            .ShouldHaveAnyValidationError();
+            .ShouldHaveValidationErrors();
 
     [Fact]
     public void Transfer_AgeOutOfRange_Fails() =>
@@ -122,12 +122,12 @@ public class ValidatorTests
     [Fact]
     public void Batch_EmptyItemInArray_Fails() =>
         _batchValidator.TestValidate(new BatchTransferRequest(["item-1", "", "item-3"]))
-            .ShouldHaveAnyValidationError();
+            .ShouldHaveValidationErrors();
 
     [Fact]
     public void Batch_MinOverMax_Fails() =>
         _batchValidator.TestValidate(new BatchTransferRequest(["item-1"], OverrideMinAge: 10, OverrideMaxAge: 5))
-            .ShouldHaveAnyValidationError();
+            .ShouldHaveValidationErrors();
 
     [Fact]
     public void Batch_Exactly50_Passes()
@@ -151,7 +151,7 @@ public class ValidatorTests
     [Fact]
     public void Settings_MinOverMax_Fails() =>
         _settingsValidator.TestValidate(new UpdateSettingsRequest(DefaultMinAge: 10, DefaultMaxAge: 5))
-            .ShouldHaveAnyValidationError();
+            .ShouldHaveValidationErrors();
 
     [Fact]
     public void Settings_OutOfRange_Fails() =>
