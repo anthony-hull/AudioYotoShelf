@@ -13,6 +13,13 @@ public interface IAudiobookshelfService
     Task<bool> ValidateTokenAsync(string baseUrl, string token, CancellationToken ct = default);
 
     /// <summary>
+    /// Resolves the user an Audiobookshelf API key (v2.26+, Settings → API Keys) acts as.
+    /// Lets accounts that sign in to ABS through OpenID Connect, and so have no password, connect.
+    /// Returns the same shape as <see cref="LoginAsync"/>, minus any tokens: the key itself is the token.
+    /// </summary>
+    Task<AbsLoginResponse> AuthorizeApiKeyAsync(string baseUrl, string apiKey, CancellationToken ct = default);
+
+    /// <summary>
     /// Exchanges a stored Audiobookshelf refresh token (v2.26+ JWT auth) for a fresh access token,
     /// letting a stored connection be reused without re-prompting the user for credentials.
     /// Returns the same shape as <see cref="LoginAsync"/>.

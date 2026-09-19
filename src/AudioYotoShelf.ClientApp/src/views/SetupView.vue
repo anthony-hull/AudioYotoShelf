@@ -1,18 +1,44 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { authApi } from '@/services/api'
 import { useConnectionStore } from '@/stores/connectionStore'
+import type { AbsConnectRequest } from '@/types'
+
+type AbsSignInMethod = 'password' | 'apiKey'
 
 const router = useRouter()
 const connectionStore = useConnectionStore()
 
 // ABS form
+const isServerUrlLocked = ref(false)
+const signInMethod = ref<AbsSignInMethod>('password')
 const absUrl = ref('http://localhost:13378')
 const absUsername = ref('')
 const absPassword = ref('')
+const absApiKey = ref('')
+
+onMounted(async () => {
+  try {
+    const { data } = await authApi.getAbsConnectOptions()
+    isServerUrlLocked.value = data.isServerUrlLocked
+  } catch (err: unknown) {
+    // Older servers lack this endpoint; asking for the URL is the safe fallback.
+    console.warn('Could not load Audiobookshelf connect options', err)
+  }
+})
+
+function buildConnectRequest(): AbsConnectRequest {
+  const server = isServerUrlLocked.value ? {} : { baseUrl: absUrl.value }
+  const credentials =
+    signInMethod.value === 'apiKey'
+      ? { apiKey: absApiKey.value }
+      : { username: absUsername.value, password: absPassword.value }
+  return { ...server, ...credentials }
+}
 
 async function connectAbs() {
-  await connectionStore.connectToAbs(absUrl.value, absUsername.value, absPassword.value)
+  await connectionStore.connectToAbs(buildConnectRequest())
 }
 
 async function startYotoAuth() {
@@ -43,23 +69,78 @@ function goToLibrary() {
       </div>
 
       <form v-if="!connectionStore.isAbsConnected" @submit.prevent="connectAbs" class="space-y-4">
-        <div>
+        <div v-if="!isServerUrlLocked">
           <label class="block text-sm font-medium text-gray-700 mb-1">Server URL</label>
           <input
             v-model="absUrl"
+            data-test="abs-url"
             type="url"
             class="input-field"
             placeholder="http://localhost:13378"
             required
           />
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
-          <input v-model="absUsername" type="text" class="input-field" required />
+
+        <div class="flex gap-2" role="group" aria-label="Sign-in method">
+          <button
+            type="button"
+            data-test="method-password"
+            :class="signInMethod === 'password' ? 'btn-primary' : 'btn-secondary'"
+            :aria-pressed="signInMethod === 'password'"
+            class="flex-1"
+            @click="signInMethod = 'password'"
+          >
+            Username &amp; password
+          </button>
+          <button
+            type="button"
+            data-test="method-api-key"
+            :class="signInMethod === 'apiKey' ? 'btn-primary' : 'btn-secondary'"
+            :aria-pressed="signInMethod === 'apiKey'"
+            class="flex-1"
+            @click="signInMethod = 'apiKey'"
+          >
+            API key
+          </button>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
-          <input v-model="absPassword" type="password" class="input-field" required />
+
+        <template v-if="signInMethod === 'password'">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+            <input
+              v-model="absUsername"
+              data-test="abs-username"
+              type="text"
+              class="input-field"
+              required
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <input
+              v-model="absPassword"
+              data-test="abs-password"
+              type="password"
+              class="input-field"
+              required
+            />
+          </div>
+        </template>
+
+        <div v-else>
+          <label class="block text-sm font-medium text-gray-700 mb-1">API key</label>
+          <input
+            v-model="absApiKey"
+            data-test="abs-api-key"
+            type="password"
+            class="input-field"
+            autocomplete="off"
+            required
+          />
+          <p class="mt-1 text-xs text-gray-500">
+            For accounts that sign in to Audiobookshelf with single sign-on. An Audiobookshelf admin
+            creates one under Settings &rarr; API Keys.
+          </p>
         </div>
         <button type="submit" class="btn-primary w-full" :disabled="connectionStore.isLoading">
           {{ connectionStore.isLoading ? 'Connecting...' : 'Connect' }}

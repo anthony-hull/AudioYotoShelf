@@ -4,6 +4,7 @@ using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Data;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -32,10 +33,69 @@ public class AuthControllerTests : IDisposable
             Mock.Of<ILogger<AuthController>>());
     }
 
+    private AuthController CreateSut(IAudiobookshelfService absService, string? configuredAbsUrl)
+    {
+        var settings = new Dictionary<string, string?> { ["Audiobookshelf:Url"] = configuredAbsUrl };
+        var sut = new AuthController(
+            absService,
+            Mock.Of<IYotoService>(),
+            _db,
+            new ConfigurationBuilder().AddInMemoryCollection(settings).Build(),
+            Mock.Of<ILogger<AuthController>>());
+        sut.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+        return sut;
+    }
+
     public void Dispose()
     {
         _db.Database.EnsureDeleted();
         _db.Dispose();
+    }
+
+    // =========================================================================
+    // ConnectToAudiobookshelf — which server a connection may target
+    // =========================================================================
+
+    [Fact]
+    public async Task Connect_UrlDiffersFromConfiguredServer_RejectedWithoutContactingIt()
+    {
+        // With the server URL configured, a visitor must not be able to make this app send
+        // requests (or credentials) to an address of their choosing.
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+        var sut = CreateSut(absService.Object, configuredAbsUrl: "http://abs.home");
+
+        var result = await sut.ConnectToAudiobookshelf(
+            new AuthController.AbsConnectRequest("http://attacker.example", ApiKey: "key"), CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    [Fact]
+    public async Task Connect_NoUrlAndNoConfiguredServer_Rejected()
+    {
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+        var sut = CreateSut(absService.Object, configuredAbsUrl: null);
+
+        var result = await sut.ConnectToAudiobookshelf(
+            new AuthController.AbsConnectRequest(null, "user", "pass"), CancellationToken.None);
+
+        result.Should().BeOfType<BadRequestObjectResult>();
+    }
+
+    // =========================================================================
+    // GetAbsConnectOptions
+    // =========================================================================
+
+    [Theory]
+    [InlineData("http://abs.home", true)]
+    [InlineData(null, false)]
+    public void ConnectOptions_ReportWhetherServerUrlIsLocked(string? configuredAbsUrl, bool expectedLocked)
+    {
+        var sut = CreateSut(Mock.Of<IAudiobookshelfService>(), configuredAbsUrl);
+
+        var result = sut.GetAbsConnectOptions();
+
+        result.Value!.IsServerUrlLocked.Should().Be(expectedLocked);
     }
 
     // =========================================================================

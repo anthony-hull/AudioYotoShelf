@@ -84,10 +84,22 @@ describe('connectionStore', () => {
     } as never)
     const store = useConnectionStore()
 
-    await store.connectToAbs('http://abs.local', 'alice', 'pw')
+    await store.connectToAbs({ baseUrl: 'http://abs.local', username: 'alice', password: 'pw' })
 
     expect(store.userConnectionId).toBe('conn-new')
     expect(authApi.getConnectionStatus).toHaveBeenCalled()
+  })
+
+  it('connectToAbs passes an API key through instead of a password', async () => {
+    vi.mocked(authApi.connectAbs).mockResolvedValue({
+      data: { userConnectionId: 'conn-key' },
+    } as never)
+    vi.mocked(authApi.getConnectionStatus).mockResolvedValue({ data: status() } as never)
+    const store = useConnectionStore()
+
+    await store.connectToAbs({ apiKey: 'abs-key' })
+
+    expect(authApi.connectAbs).toHaveBeenCalledWith({ apiKey: 'abs-key' })
   })
 
   it('logout clears local state and signs out on the server', () => {

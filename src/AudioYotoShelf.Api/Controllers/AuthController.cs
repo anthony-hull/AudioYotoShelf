@@ -22,13 +22,36 @@ public class AuthController(
 {
     // --- Audiobookshelf Auth ---
 
-    public record AbsConnectRequest(string BaseUrl, string Username, string Password);
+    /// <summary>
+    /// Connect with either <see cref="Username"/> + <see cref="Password"/> or an ABS
+    /// <see cref="ApiKey"/>. <see cref="BaseUrl"/> may be omitted when the server's Audiobookshelf
+    /// URL is configured (<c>Audiobookshelf:Url</c>).
+    /// </summary>
+    public record AbsConnectRequest(
+        string? BaseUrl = null, string? Username = null, string? Password = null, string? ApiKey = null);
+
+    public record AbsConnectOptions(bool IsServerUrlLocked);
+
+    /// <summary>Tells the setup screen whether to ask for a server URL at all.</summary>
+    [AllowAnonymous]
+    [HttpGet("abs/options")]
+    public ActionResult<AbsConnectOptions> GetAbsConnectOptions() =>
+        new AbsConnectOptions(IsServerUrlLocked: ConfiguredAbsUrl is not null);
 
     [AllowAnonymous]
     [HttpPost("abs/connect")]
     public async Task<IActionResult> ConnectToAudiobookshelf([FromBody] AbsConnectRequest request, CancellationToken ct)
     {
-        var loginResponse = await absService.LoginAsync(request.BaseUrl, request.Username, request.Password, ct);
+        var baseUrl = ResolveAbsUrl(request.BaseUrl);
+        if (baseUrl is null)
+            return BadRequest(ConfiguredAbsUrl is null
+                ? "Audiobookshelf server URL is required"
+                : "This app only connects to its configured Audiobookshelf server");
+
+        var usesApiKey = !string.IsNullOrEmpty(request.ApiKey);
+        var loginResponse = usesApiKey
+            ? await absService.AuthorizeApiKeyAsync(baseUrl, request.ApiKey!, ct)
+            : await absService.LoginAsync(baseUrl, request.Username!, request.Password!, ct);
         var absUser = loginResponse.User;
 
         var userConnection = await db.UserConnections
@@ -39,26 +62,29 @@ public class AuthController(
             userConnection = new UserConnection
             {
                 Username = absUser.Username,
-                AudiobookshelfUrl = request.BaseUrl.TrimEnd('/'),
+                AudiobookshelfUrl = baseUrl,
                 DefaultLibraryId = loginResponse.UserDefaultLibraryId
             };
-            AbsTokens.ApplyLogin(userConnection, absUser);
             db.UserConnections.Add(userConnection);
         }
         else
         {
-            userConnection.AudiobookshelfUrl = request.BaseUrl.TrimEnd('/');
-            AbsTokens.ApplyLogin(userConnection, absUser);
+            userConnection.AudiobookshelfUrl = baseUrl;
             userConnection.DefaultLibraryId = loginResponse.UserDefaultLibraryId ?? userConnection.DefaultLibraryId;
         }
 
+        if (usesApiKey)
+            AbsTokens.ApplyApiKey(userConnection, request.ApiKey!);
+        else
+            AbsTokens.ApplyLogin(userConnection, absUser);
+
         // Admin rights are only granted to allow-listed usernames that authenticate against the
-        // TRUSTED admin Audiobookshelf server (Admin:AudiobookshelfUrl). request.BaseUrl is
-        // attacker-controllable, so admin must never be derived from a username reported by an
-        // arbitrary server — requiring the trusted URL forces a real login against the real server.
+        // TRUSTED admin Audiobookshelf server (Admin:AudiobookshelfUrl). Unless Audiobookshelf:Url is
+        // configured, the URL is attacker-controllable, so admin must never be derived from a username
+        // reported by an arbitrary server — requiring the trusted URL forces a real login against it.
         var adminAbsUrl = configuration["Admin:AudiobookshelfUrl"];
         var fromAdminServer = !string.IsNullOrWhiteSpace(adminAbsUrl) &&
-            string.Equals(request.BaseUrl.TrimEnd('/'), adminAbsUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+            string.Equals(baseUrl, adminAbsUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
         var adminUsernames = (configuration["Admin:Usernames"] ?? configuration["ADMIN_USERNAMES"] ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (fromAdminServer && adminUsernames.Contains(absUser.Username, StringComparer.OrdinalIgnoreCase))
@@ -75,7 +101,8 @@ public class AuthController(
         // admin session.
         await IssueSessionAsync(userConnection, isAdminSession: userConnection.IsAdmin && fromAdminServer);
 
-        logger.LogInformation("User {Username} connected to ABS at {BaseUrl}", absUser.Username, request.BaseUrl);
+        logger.LogInformation("User {Username} connected to ABS at {BaseUrl} using {Method}",
+            absUser.Username, baseUrl, usesApiKey ? "API key" : "password");
 
         return Ok(new
         {
@@ -94,6 +121,26 @@ public class AuthController(
     {
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         return Ok(new { LoggedOut = true });
+    }
+
+    private string? ConfiguredAbsUrl =>
+        string.IsNullOrWhiteSpace(configuration["Audiobookshelf:Url"])
+            ? null
+            : configuration["Audiobookshelf:Url"]!.TrimEnd('/');
+
+    /// <summary>
+    /// The Audiobookshelf server a connect request may use: the configured server when set (a
+    /// differing request URL resolves to null), otherwise the URL the request supplied.
+    /// </summary>
+    private string? ResolveAbsUrl(string? requestedUrl)
+    {
+        var requested = string.IsNullOrWhiteSpace(requestedUrl) ? null : requestedUrl.TrimEnd('/');
+        if (ConfiguredAbsUrl is null)
+            return requested;
+
+        var matchesConfigured = requested is null ||
+            string.Equals(requested, ConfiguredAbsUrl, StringComparison.OrdinalIgnoreCase);
+        return matchesConfigured ? ConfiguredAbsUrl : null;
     }
 
     private async Task IssueSessionAsync(UserConnection user, bool isAdminSession)

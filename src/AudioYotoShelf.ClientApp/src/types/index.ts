@@ -51,6 +51,19 @@ export interface UsagePoint {
   transfers: number
 }
 
+/** Either a username + password or an Audiobookshelf API key. */
+export interface AbsConnectRequest {
+  /** Omitted when the server has its Audiobookshelf URL configured. */
+  baseUrl?: string
+  username?: string
+  password?: string
+  apiKey?: string
+}
+
+export interface AbsConnectOptions {
+  isServerUrlLocked: boolean
+}
+
 export interface AbsConnectResponse {
   userConnectionId: string
   username: string

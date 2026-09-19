@@ -34,6 +34,19 @@ public static class AbsTokens
             user.AudiobookshelfRefreshToken = absUser.RefreshToken;
     }
 
+    /// <summary>
+    /// Stores an Audiobookshelf API key as the connection's token. API keys carry no refresh token:
+    /// any stored one (from an earlier password login) is dropped so <see cref="EnsureValidAsync"/>
+    /// never replaces the key with a password-session token. An expired key needs reconnecting.
+    /// </summary>
+    public static void ApplyApiKey(UserConnection user, string apiKey)
+    {
+        user.AudiobookshelfToken = apiKey;
+        user.AudiobookshelfRefreshToken = null;
+        user.AudiobookshelfTokenValidatedAt = DateTimeOffset.UtcNow;
+        user.AudiobookshelfTokenExpiresAt = GetJwtExpiry(apiKey);
+    }
+
     public static async Task<string> EnsureValidAsync(
         AudioYotoShelfDbContext db, IAudiobookshelfService absService, UserConnection user,
         ILogger logger, CancellationToken ct)
