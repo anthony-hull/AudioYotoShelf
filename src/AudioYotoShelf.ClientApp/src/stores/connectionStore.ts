@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/services/api'
-import type { ConnectionStatus } from '@/types'
+import type { AbsConnectRequest, ConnectionStatus } from '@/types'
 
 const STORAGE_KEY = 'ays_user_connection_id'
 
@@ -40,12 +40,12 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
 
-  /** Connect to Audiobookshelf with URL + credentials */
-  async function connectToAbs(baseUrl: string, absUsername: string, password: string) {
+  /** Connect to Audiobookshelf with a username + password or an API key */
+  async function connectToAbs(request: AbsConnectRequest) {
     isLoading.value = true
     error.value = null
     try {
-      const { data } = await authApi.connectAbs(baseUrl, absUsername, password)
+      const { data } = await authApi.connectAbs(request)
       setUserConnectionId(data.userConnectionId)
       // Reload full status so all fields are populated
       await loadStatus()

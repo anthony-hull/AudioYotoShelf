@@ -123,6 +123,7 @@ Set in `.env` (copied from [`.env.example`](.env.example)). Used by [`docker-com
 | `GEMINI_API_KEY` | no | — | Google AI Studio key for icon generation |
 | `DB_PASSWORD` | recommended | `changeme` | PostgreSQL password |
 | `BRIDGE_PORT` | no | `8080` | Host port the app listens on |
+| `AUDIOBOOKSHELF_URL` | recommended | — | The only ABS server users may connect to; hides the URL field on the setup screen |
 | `ADMIN_AUDIOBOOKSHELF_URL` | no | — | Trusted ABS server URL that can grant admin (see [Admin analytics](#admin-analytics)) |
 | `ADMIN_USERNAMES` | no | — | Comma-separated ABS usernames granted admin when they sign in via the trusted server |
 
@@ -145,7 +146,14 @@ open http://localhost:8080
 
 ### First Run
 
-1. Open `http://localhost:8080` and enter your Audiobookshelf server URL, username, and password
+1. Open `http://localhost:8080` and sign in to Audiobookshelf with either:
+   - your username and password, or
+   - an **API key** — needed if you sign in to ABS with single sign-on (OpenID Connect), since
+     those accounts have no password. An ABS admin creates one under **Settings → API Keys**,
+     choosing the user it acts as; it gets exactly that user's library access. The user needs
+     the "can download" permission for transfers.
+
+   Enter the server URL too, unless `AUDIOBOOKSHELF_URL` is set.
 2. Authorize with Yoto — you're redirected to Yoto's login (OAuth authorization code flow) and back to the app
 3. Browse your library and transfer books to MYO cards
 

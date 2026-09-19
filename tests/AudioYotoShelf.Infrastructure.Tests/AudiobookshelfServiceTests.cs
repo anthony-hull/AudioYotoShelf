@@ -49,6 +49,61 @@ public class AudiobookshelfServiceTests
     }
 
     // =========================================================================
+    // AuthorizeApiKeyAsync — resolves the user an ABS API key acts as
+    // =========================================================================
+
+    [Fact]
+    public async Task AuthorizeApiKeyAsync_PostsKeyAsBearerToApiAuthorize()
+    {
+        _handler.SetupJsonResponseFor("/api/authorize", new AbsLoginResponse(
+            new AbsUser("u1", "alice", "user", "legacy", true, null, ["lib-1"]), "lib-1"));
+
+        await _sut.AuthorizeApiKeyAsync("http://abs.local", "api-key-jwt");
+
+        _handler.LastRequestMethod.Should().Be(HttpMethod.Post);
+        _handler.LastRequestUri.Should().Be("/api/authorize");
+        _handler.LastAuthorization.Should().Be("Bearer api-key-jwt");
+    }
+
+    [Fact]
+    public async Task AuthorizeApiKeyAsync_ReturnsTheUserTheKeyActsAs()
+    {
+        _handler.SetupJsonResponseFor("/api/authorize", new AbsLoginResponse(
+            new AbsUser("u1", "alice", "user", "legacy", true, null, ["lib-1"]), "lib-1"));
+
+        var result = await _sut.AuthorizeApiKeyAsync("http://abs.local", "api-key-jwt");
+
+        result.User.Username.Should().Be("alice");
+        result.UserDefaultLibraryId.Should().Be("lib-1");
+    }
+
+    [Fact]
+    public async Task AuthorizeApiKeyAsync_RejectedKey_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.Unauthorized, "Unauthorized");
+
+        var act = () => _sut.AuthorizeApiKeyAsync("http://abs.local", "bad-key");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    // =========================================================================
+    // ValidateTokenAsync — ABS only routes POST /api/authorize
+    // =========================================================================
+
+    [Fact]
+    public async Task ValidateTokenAsync_PostsToApiAuthorize()
+    {
+        _handler.SetupJsonResponse(new { });
+
+        var isValid = await _sut.ValidateTokenAsync("http://abs.local", "token");
+
+        isValid.Should().BeTrue();
+        _handler.LastRequestMethod.Should().Be(HttpMethod.Post);
+        _handler.LastRequestUri.Should().Be("/api/authorize");
+    }
+
+    // =========================================================================
     // GetLibraryItemsAsync — query string construction
     // =========================================================================
 
@@ -301,11 +356,13 @@ public class AudiobookshelfServiceTests
     }
 
     /// <summary>
-    /// Minimal HTTP handler that captures the last request URI and returns a canned response.
+    /// Minimal HTTP handler that captures the last request and returns a canned response.
     /// </summary>
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         public string? LastRequestUri { get; private set; }
+        public HttpMethod? LastRequestMethod { get; private set; }
+        public string? LastAuthorization { get; private set; }
 
         private HttpStatusCode _statusCode = HttpStatusCode.OK;
         private string _content = "{}";
@@ -336,6 +393,8 @@ public class AudiobookshelfServiceTests
         {
             var path = request.RequestUri?.PathAndQuery ?? "";
             LastRequestUri = path;
+            LastRequestMethod = request.Method;
+            LastAuthorization = request.Headers.Authorization?.ToString();
 
             var match = _routes.FirstOrDefault(r => path.Contains(r.PathContains));
             var content = match.Json ?? _content;

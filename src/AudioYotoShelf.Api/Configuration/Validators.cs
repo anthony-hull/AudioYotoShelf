@@ -9,14 +9,23 @@ public class AbsConnectRequestValidator : AbstractValidator<AuthController.AbsCo
 {
     public AbsConnectRequestValidator()
     {
+        // Optional: the server may have its Audiobookshelf URL configured (AuthController resolves it).
         RuleFor(x => x.BaseUrl)
-            .NotEmpty().WithMessage("Server URL is required")
             .Must(url => Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
                          (uri.Scheme == "http" || uri.Scheme == "https"))
+            .When(x => !string.IsNullOrEmpty(x.BaseUrl))
             .WithMessage("Must be a valid HTTP/HTTPS URL");
 
-        RuleFor(x => x.Username).NotEmpty().MaximumLength(256);
-        RuleFor(x => x.Password).NotEmpty();
+        When(x => string.IsNullOrEmpty(x.ApiKey), () =>
+        {
+            RuleFor(x => x.Username).NotEmpty().MaximumLength(256);
+            RuleFor(x => x.Password).NotEmpty();
+        }).Otherwise(() =>
+        {
+            RuleFor(x => x.ApiKey)
+                .Must((request, _) => string.IsNullOrEmpty(request.Username) && string.IsNullOrEmpty(request.Password))
+                .WithMessage("Use either an API key or a username and password, not both");
+        });
     }
 }
 

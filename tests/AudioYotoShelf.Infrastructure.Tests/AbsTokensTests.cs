@@ -94,6 +94,50 @@ public class AbsTokensTests : IDisposable
     }
 
     // =========================================================================
+    // ApplyApiKey
+    // =========================================================================
+
+    [Fact]
+    public void ApplyApiKey_StoresKeyAsTokenAndDropsPasswordLoginRefreshToken()
+    {
+        // Switching a connection from password login to an API key must not leave the old refresh
+        // token behind, or EnsureValidAsync would later swap the key for a password-session token.
+        var user = TestData.CreateUserConnection(absToken: "old-access", absRefreshToken: "old-refresh");
+        var apiKey = MakeJwt(DateTimeOffset.UtcNow.AddDays(30));
+
+        AbsTokens.ApplyApiKey(user, apiKey);
+
+        user.AudiobookshelfToken.Should().Be(apiKey);
+        user.AudiobookshelfRefreshToken.Should().BeNull();
+    }
+
+    [Fact]
+    public void ApplyApiKey_KeyWithExpiry_RecordsExpiry()
+    {
+        var user = TestData.CreateUserConnection();
+        var exp = DateTimeOffset.UtcNow.AddDays(30);
+
+        AbsTokens.ApplyApiKey(user, MakeJwt(exp));
+
+        user.AudiobookshelfTokenExpiresAt!.Value.ToUnixTimeSeconds().Should().Be(exp.ToUnixTimeSeconds());
+    }
+
+    [Fact]
+    public async Task ApplyApiKey_ThenEnsureValid_ReturnsKeyWithoutRefreshing()
+    {
+        // An API key has no refresh token, so even one close to expiry is used as-is.
+        var user = TestData.CreateUserConnection();
+        var apiKey = MakeJwt(DateTimeOffset.UtcNow.AddMinutes(1));
+        AbsTokens.ApplyApiKey(user, apiKey);
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+
+        var token = await AbsTokens.EnsureValidAsync(
+            _dbFixture.DbContext, absService.Object, user, Mock.Of<ILogger>(), CancellationToken.None);
+
+        token.Should().Be(apiKey);
+    }
+
+    // =========================================================================
     // EnsureValidAsync
     // =========================================================================
 

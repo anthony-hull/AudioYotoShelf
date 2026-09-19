@@ -1,5 +1,7 @@
 import axios from 'axios'
 import type {
+  AbsConnectOptions,
+  AbsConnectRequest,
   AbsConnectResponse,
   AbsLibrary,
   AbsLibraryItemsResponse,
@@ -22,8 +24,12 @@ const api = axios.create({
 // --- Auth ---
 
 export const authApi = {
-  connectAbs(baseUrl: string, username: string, password: string) {
-    return api.post<AbsConnectResponse>('/auth/abs/connect', { baseUrl, username, password })
+  getAbsConnectOptions() {
+    return api.get<AbsConnectOptions>('/auth/abs/options')
+  },
+
+  connectAbs(request: AbsConnectRequest) {
+    return api.post<AbsConnectResponse>('/auth/abs/connect', request)
   },
 
   logout() {
