@@ -29,8 +29,9 @@ RUN dotnet publish src/AudioYotoShelf.Api/AudioYotoShelf.Api.csproj \
 # Stage 3: Runtime with FFmpeg
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
+# curl is for the HEALTHCHECK below; the aspnet base image does not include it.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends ffmpeg curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
