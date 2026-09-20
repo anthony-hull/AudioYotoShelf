@@ -490,6 +490,27 @@ public class AuthControllerTests : IDisposable
         rig.SignedIn!.IsInRole("Admin").Should().Be(expectAdmin);
     }
 
+    [Theory]
+    [InlineData("bob", false)]      // removed from the list
+    [InlineData("", false)]         // list emptied
+    [InlineData(null, false)]       // list unset
+    [InlineData("alice", true)]     // still listed: keeps admin
+    public async Task Connect_ExistingAdminOnTheTrustedServer_FollowsTheCurrentAllowList(string? adminUsers, bool expectAdmin)
+    {
+        var admin = TestData.CreateUserConnection(username: "alice");
+        admin.IsAdmin = true;
+        _db.UserConnections.Add(admin);
+        await _db.SaveChangesAsync();
+        var rig = CreateRig(Settings(configuredUrl: null, adminUrl: "http://admin.home", adminUsers: adminUsers));
+        rig.Abs.Setup(s => s.AuthorizeApiKeyAsync("http://admin.home", ApiKey, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LoginResponse(username: "alice"));
+
+        await rig.Controller.ConnectToAudiobookshelf(KeyRequest("http://admin.home"), CancellationToken.None);
+
+        FreshDb().UserConnections.Single().IsAdmin.Should().Be(expectAdmin);
+        rig.SignedIn!.IsInRole("Admin").Should().Be(expectAdmin);
+    }
+
     [Fact]
     public async Task Connect_AnAdminRowReachedViaAnotherServer_NeverGetsAnAdminSession()
     {
