@@ -60,6 +60,7 @@ public class UserConnection : BaseEntity
          AudiobookshelfTokenExpiresAt > DateTimeOffset.UtcNow ||
          !string.IsNullOrEmpty(AudiobookshelfRefreshToken));
 
+    // Stryker disable once Equality : `>` vs `>=` differs only when the expiry equals the current tick, which no test can pin
     public bool HasValidYotoConnection =>
         !string.IsNullOrEmpty(YotoAccessToken) &&
         YotoTokenExpiresAt.HasValue &&
