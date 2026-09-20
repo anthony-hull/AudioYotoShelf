@@ -886,6 +886,46 @@ public class AudiobookshelfServiceTests
         await act.Should().ThrowAsync<HttpRequestException>();
     }
 
+    [Fact]
+    public async Task StartSsoAsync_AbsRedirectsWithNowhereToGo_Throws()
+    {
+        _ssoHandler.SetupResponse(HttpStatusCode.Found, "");
+
+        var act = () => _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_AStatusThatIsNotARedirectIsNotFollowedEvenWithALocationHeader()
+    {
+        _ssoHandler.SetupWithLocation(HttpStatusCode.OK, AbsAuthorizeLocation);
+
+        var act = () => _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_ASetCookieWithNoName_IsIgnored()
+    {
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation, "=orphan; Path=/", "connect.sid=abc; Path=/");
+
+        var start = await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        start.Cookies.Should().Equal(new Dictionary<string, string> { ["connect.sid"] = "abc" });
+    }
+
+    [Fact]
+    public async Task CompleteSsoAsync_AnEmptyReply_Throws()
+    {
+        _ssoHandler.SetupResponse(HttpStatusCode.OK, "null");
+
+        var act = () => _sut.CompleteSsoAsync("http://abs.local", "c", "s", "v", AbsSessionCookies);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
     // =========================================================================
     // CompleteSsoAsync — step 4: trade the code for the person's own ABS tokens
     // =========================================================================
@@ -986,6 +1026,13 @@ public class AudiobookshelfServiceTests
         /// <summary>Route a canned JSON body to requests whose path contains <paramref name="pathContains"/>.</summary>
         public void SetupJsonResponseFor<T>(string pathContains, T body) =>
             _routes.Add((pathContains, Json(body)));
+
+        /// <summary>Answer with <paramref name="status"/> and a Location header, which is only a redirect for some statuses.</summary>
+        public void SetupWithLocation(HttpStatusCode status, string location)
+        {
+            _statusCode = status;
+            _location = location;
+        }
 
         /// <summary>Answer every request with a 302 to <paramref name="location"/> and these Set-Cookie headers.</summary>
         public void SetupRedirect(string location, params string[] setCookies)

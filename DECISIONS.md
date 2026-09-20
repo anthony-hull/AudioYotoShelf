@@ -2,6 +2,57 @@
 
 Architectural decisions and hard-won constraints for the homelab fork. Grep this before touching an area.
 
+## 2026-09-20 — Connect to Audiobookshelf by single sign-on, through ABS's own API-client OpenID flow
+
+**Decision.** The app drives Audiobookshelf's OpenID flow for API clients (the one its mobile app uses) from the
+server: `GET /auth/openid?response_type=code&redirect_uri&state&code_challenge` returns a 302 to the identity provider;
+the browser signs in; the app then calls `/auth/openid/callback` with the `code_verifier` and returns the person's own
+ABS access and refresh tokens. Nothing is typed and no API key changes hands. Offered only when `Audiobookshelf:Url`
+is set. The API-key and password paths are untouched.
+
+**Why not trust the identity headers Traefik forwards.** They are identity, not a credential (the app still needs a
+token to call ABS as that person), and any container on the proxy network can reach the app directly and set them.
+
+**Constraints found by measuring, not assuming:**
+- **ABS builds the identity provider's return address from the request's `Host`.** Called by its container name it
+  answers `redirect_uri=http://audiobookshelf/...`, which no browser can reach. `Audiobookshelf:PublicUrl` makes step 1
+  present the public host and `X-Forwarded-Proto`. Only that call needs it: ABS keeps the result in its session.
+- **The code exchange returns 400 "No session" without the ABS session cookies from step 1.** They are kept with the
+  PKCE verifier in Redis (`abs-sso:<state>`, 5 minutes, single use), not in Postgres.
+- **The callback address must be in ABS *Allowed Mobile Redirect URIs*, character for character. Never `*`:** with a
+  single `*` ABS accepts any redirect address.
+- **The attempt is bound to the browser that started it** by an HttpOnly, SameSite=Lax nonce cookie (`ays_sso`), so a
+  link cannot finish someone else's attempt and sign the follower in as them (login CSRF). Lax, not Strict, because the
+  browser returns from the provider on a cross-site navigation.
+- **Match Existing By = email in ABS** links a hand-made account on first sign-in; it is safe only while the identity
+  provider does not let people edit their own email.
+- **A refused, expired, replayed or wrong-browser attempt redirects to `/setup?sso=expired|unavailable`**, not to a bare
+  400 page: a refresh or double-click looks exactly like a replay. `App.vue` must not push `/setup` when already there
+  (it did, and dropped the query, so the notice never showed).
+
+## 2026-09-20 — Ask Yoto for the content and icon scopes
+
+**Decision.** The authorize request asks for `profile offline_access openid user:content:manage user:content:view
+user:icons:manage`.
+
+**Why.** Yoto gives a client that does not ask only `user:account:view`, and then refuses the first upload call with
+`403 "User does not have required scope(s): 'user:content:manage'"`. Measured on a live token, not inferred. Upstream
+requests the short list too.
+
+**Open gap.** A refresh does not add scopes, and the setup screen offers "Authorize with Yoto" only once the stored token
+has expired, so anyone who authorized before this change has to have the token cleared to re-authorize.
+
+## 2026-09-20 — A transfer reports each track, and reads Yoto's own progress
+
+**Decision.** The live update says which track it concerns, what stage that track is at (downloading, uploading,
+transcoding, uploaded, already on Yoto) and, while it transcodes, Yoto's percentage. The client keeps state per track.
+
+**Why.** Yoto reports its transcode under `transcode.progress { phase, percent }`; the `status` field the app used to
+read is always null, so a track's progress sat still for about three minutes and looked hung. Tracks go one after
+another, so a 17-track book takes on the order of 50 minutes. Whether Yoto accepts several transcodes at once has not
+been tested. Progress is reported with `InlineProgress`, not `Progress<T>`, which posts to the thread pool and can
+reorder reports.
+
 ## 2026-09-20 — Mutation testing with Stryker.NET, two gates, unit tests only
 
 **Decision.** Stryker.NET 4.14.0 (pinned in `dotnet-tools.json`). Two configs: a strict gate on `AudioYotoShelf.Core`
