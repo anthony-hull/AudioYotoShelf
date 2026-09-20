@@ -1,0 +1,89 @@
+name: Mutation testing
+
+# What is excluded from mutation, and why, is in docs/mutation-testing.md.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'stryker-config*.json'
+      - 'dotnet-tools.json'
+      - 'Directory.*.props'
+      - '.github/workflows/mutation.yml'
+  schedule:
+    - cron: '0 3 * * 1'   # Mondays 03:00 UTC: catches decay that no single PR caused
+  workflow_dispatch:
+
+concurrency:
+  group: mutation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  core-gate:
+    name: Mutation gate (Core, >= 95%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: |
+          dotnet restore AudioYotoShelf.sln
+          dotnet tool restore
+
+      - name: Stryker (Core)
+        run: dotnet stryker --config-file stryker-config.core.json
+
+      - name: Job summary
+        if: always()
+        run: cat StrykerOutput/*/reports/mutation-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-core
+          path: StrykerOutput/**/reports/
+          if-no-files-found: ignore
+
+  whole-solution:
+    name: Mutation floor (whole solution, >= 35%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: |
+          dotnet restore AudioYotoShelf.sln
+          dotnet tool restore
+
+      - name: Stryker (whole solution, unit tests only)
+        run: dotnet stryker
+
+      - name: Job summary
+        if: always()
+        run: cat StrykerOutput/*/reports/mutation-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-report-solution
+          path: StrykerOutput/**/reports/
+          if-no-files-found: ignore

@@ -1,0 +1,36 @@
+{
+  "stryker-config": {
+    "solution": "AudioYotoShelf.sln",
+    "test-projects": [
+      "tests/AudioYotoShelf.Core.Tests/AudioYotoShelf.Core.Tests.csproj",
+      "tests/AudioYotoShelf.Infrastructure.Tests/AudioYotoShelf.Infrastructure.Tests.csproj",
+      "tests/AudioYotoShelf.Api.Tests/AudioYotoShelf.Api.Tests.csproj"
+    ],
+    "configuration": "Release",
+    "mutation-level": "Standard",
+    "coverage-analysis": "perTest",
+    "reporters": ["progress", "html", "json", "markdown"],
+    "thresholds": {
+      "high": 80,
+      "low": 60,
+      "break": 35
+    },
+    "ignore-methods": [
+      "Log",
+      "LogTrace",
+      "LogDebug",
+      "LogInformation",
+      "LogWarning",
+      "LogError",
+      "LogCritical",
+      "ConfigureAwait"
+    ],
+    "mutate": [
+      "!**/Migrations/**",
+      "!**/Program.cs",
+      "!**/Data/Configurations/**",
+      "!**/Data/AudioYotoShelfDbContext.cs",
+      "!**/Observability/**"
+    ]
+  }
+}

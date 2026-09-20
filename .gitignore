@@ -43,3 +43,6 @@ nohup.out
 NuGet.conf
 .mcp.json
 NuGet.config
+
+# Mutation testing (Stryker.NET)
+StrykerOutput/
