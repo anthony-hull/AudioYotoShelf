@@ -88,8 +88,11 @@ public class AuthController(
             AudiobookshelfServer.IsSameServer(baseUrl, adminAbsUrl);
         var adminUsernames = (configuration["Admin:Usernames"] ?? configuration["ADMIN_USERNAMES"] ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (fromAdminServer && adminUsernames.Contains(absUser.Username, StringComparer.OrdinalIgnoreCase))
-            userConnection.IsAdmin = true;
+        // The allow-list is authoritative on the trusted server: being removed from it revokes admin at the next
+        // trusted login. A login anywhere else leaves the stored flag alone, so a forged BaseUrl can neither
+        // grant nor strip admin.
+        if (fromAdminServer)
+            userConnection.IsAdmin = adminUsernames.Contains(absUser.Username, StringComparer.OrdinalIgnoreCase);
 
         // Record the login (a session start) for usage analytics.
         userConnection.LastLoginAt = DateTimeOffset.UtcNow;
