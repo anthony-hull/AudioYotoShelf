@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.DTOs.Yoto;
@@ -382,10 +383,22 @@ public class TransferOrchestrator(
         CardTransfer transfer, CancellationToken ct)
     {
         var user = await db.UserConnections.FindAsync([transfer.UserConnectionId], ct)!;
+        TrackMapping mapping = null!;
+        TrackUpdate? lastReported = null;
+
+        // Says what is happening to the current track. A repeat of the last thing said is dropped,
+        // because every update is a live message to the browser.
+        void ReportTrack(TrackPhase phase, int? percent, string step)
+        {
+            var update = new TrackUpdate(mapping.Id, phase, percent);
+            if (update == lastReported) return;
+            lastReported = update;
+            _ = NotifyAsync(transfer, step, CancellationToken.None, update);
+        }
 
         for (int i = 0; i < mappings.Count; i++)
         {
-            var mapping = mappings[i];
+            mapping = mappings[i];
 
             // Check for existing SHA256 deduplication.
             // Scoped to the same user connection: Yoto media (yoto:#sha) is account-scoped and
@@ -403,6 +416,7 @@ public class TransferOrchestrator(
                 logger.LogInformation("Reusing existing SHA256 for track {FileIno}", mapping.AbsFileIno);
                 mapping.YotoTranscodedSha256 = existingSha;
                 mapping.YotoTrackUrl = $"yoto:#{existingSha}";
+                ReportTrack(TrackPhase.Reused, null, $"Track {i + 1}/{mappings.Count} is already on Yoto");
                 continue;
             }
 
@@ -421,6 +435,7 @@ public class TransferOrchestrator(
             {
                 // Direct download from ABS — need to buffer to temp file for content-length
                 var tempPath = Path.Combine(TempDir, $"{transfer.Id}_track{i}.tmp");
+                ReportTrack(TrackPhase.Downloading, null, $"Downloading track {i + 1}/{mappings.Count} from Audiobookshelf…");
                 await DownloadToFileAsync(user!, transfer.AbsLibraryItemId, mapping.AbsFileIno, tempPath, ct);
                 audioStream = File.OpenRead(tempPath);
                 contentLength = new FileInfo(tempPath).Length;
@@ -431,19 +446,20 @@ public class TransferOrchestrator(
             {
                 var sha256 = await yotoService.UploadAndTranscodeAsync(
                     yotoAccessToken, audioStream, contentLength, contentType,
-                    new Progress<int>(p =>
+                    new InlineProgress<int>(p =>
                     {
                         var overallProgress = 20 + (int)((i + p / 100.0) / mappings.Count * 50);
                         transfer.ProgressPercent = Math.Min(overallProgress, 70);
-                        var step = DescribeUploadStep(p, i + 1, mappings.Count);
+                        var (phase, percent) = DescribeTrackProgress(p);
                         // Best-effort live update; no DB write from the progress callback.
-                        _ = NotifyAsync(transfer, step, CancellationToken.None);
+                        ReportTrack(phase, percent, DescribeUploadStep(p, i + 1, mappings.Count));
                     }),
                     ct);
 
                 mapping.YotoTranscodedSha256 = sha256;
                 mapping.YotoTrackUrl = $"yoto:#{sha256}";
                 await db.SaveChangesAsync(ct);
+                ReportTrack(TrackPhase.Uploaded, null, $"Track {i + 1}/{mappings.Count} is on Yoto");
             }
             finally
             {
@@ -451,6 +467,14 @@ public class TransferOrchestrator(
             }
         }
     }
+
+    private readonly record struct TrackUpdate(Guid TrackId, TrackPhase Phase, int? Percent);
+
+    /// <summary>The stage a track is at, and Yoto's percentage once it is transcoding, from the track's 0-100 progress.</summary>
+    internal static (TrackPhase Phase, int? Percent) DescribeTrackProgress(int trackProgress) =>
+        trackProgress < YotoUploadProgress.TranscodeStart
+            ? (TrackPhase.Uploading, null)
+            : (TrackPhase.Transcoding, YotoUploadProgress.ToTranscodePercent(trackProgress));
 
     /// <summary>What to tell the person about a track: the upload is quick, so most of the time it is Yoto's transcode.</summary>
     internal static string DescribeUploadStep(int trackProgress, int trackNumber, int trackCount)
@@ -662,12 +686,14 @@ public class TransferOrchestrator(
         await NotifyAsync(transfer, StepLabel(status), ct);
     }
 
-    private async Task NotifyAsync(CardTransfer transfer, string step, CancellationToken ct)
+    private async Task NotifyAsync(CardTransfer transfer, string step, CancellationToken ct, TrackUpdate? track = null)
     {
         try
         {
             await notifier.SendProgressAsync(
-                new TransferProgressUpdate(transfer.Id, transfer.Status, transfer.ProgressPercent, step, transfer.ErrorMessage),
+                new TransferProgressUpdate(
+                    transfer.Id, transfer.Status, transfer.ProgressPercent, step, transfer.ErrorMessage,
+                    track?.TrackId, track?.Phase, track?.Percent),
                 ct);
         }
         catch (Exception ex)
