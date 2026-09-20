@@ -50,6 +50,7 @@ Run them locally first:
 dotnet format AudioYotoShelf.sln --verify-no-changes   # format gate
 dotnet build AudioYotoShelf.sln -c Release             # warnings are errors
 dotnet test                                            # all tests must pass
+dotnet stryker --config-file stryker-config.core.json   # mutation gate for Core; see docs/mutation-testing.md
 
 # Frontend
 cd src/AudioYotoShelf.ClientApp
