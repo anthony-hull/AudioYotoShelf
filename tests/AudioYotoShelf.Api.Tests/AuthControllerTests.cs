@@ -130,7 +130,9 @@ public class AuthControllerTests : IDisposable
 
         var result = await sut.StartAbsSso(CancellationToken.None);
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+        // Says what to set, since the person reading it is whoever runs the server.
+        result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().BeOfType<string>()
+            .Which.Should().Contain("Audiobookshelf:Url");
     }
 
     [Fact]
@@ -234,7 +236,7 @@ public class AuthControllerTests : IDisposable
 
         var result = await sut.AbsSsoCallback(code, state, CancellationToken.None);
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+        result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().Be("Missing code or state");
     }
 
     [Fact]
@@ -327,7 +329,8 @@ public class AuthControllerTests : IDisposable
 
         await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
 
-        sut.Response.Headers.SetCookie.ToString().Should().Contain($"{SsoCookieName}=;");
+        // The path matters: a cookie is only removed when deleted at the path it was set at.
+        sut.Response.Headers.SetCookie.ToString().Should().Contain($"{SsoCookieName}=;").And.Contain("path=/api/auth/abs/sso");
     }
 
     [Fact]
@@ -393,7 +396,8 @@ public class AuthControllerTests : IDisposable
 
         var result = await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+        result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().BeOfType<string>()
+            .Which.Should().Contain("Audiobookshelf:Url");
     }
 
     // =========================================================================

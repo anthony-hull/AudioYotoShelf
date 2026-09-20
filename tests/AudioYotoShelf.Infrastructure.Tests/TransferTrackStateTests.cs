@@ -141,6 +141,26 @@ public class TransferTrackStateTests : IDisposable
     }
 
     [Fact]
+    public async Task EachTrackAlreadyOnYoto_IsNamedByItsOwnPlaceInTheBook()
+    {
+        var (transfer, tracks) = await SeedTransferAsync(2);
+        var earlier = new CardTransfer
+        {
+            UserConnectionId = transfer.UserConnectionId, AbsLibraryItemId = "item-1", BookTitle = "Earlier", AgeSuggestionReason = "n/a",
+        };
+        _dbFixture.DbContext.CardTransfers.Add(earlier);
+        _dbFixture.DbContext.TrackMappings.AddRange(
+            new TrackMapping { CardTransferId = earlier.Id, AbsFileIno = "ino-0", ChapterTitle = "One", YotoTranscodedSha256 = "a" },
+            new TrackMapping { CardTransferId = earlier.Id, AbsFileIno = "ino-1", ChapterTitle = "Two", YotoTranscodedSha256 = "b" });
+        await _dbFixture.DbContext.SaveChangesAsync();
+
+        await UploadAsync(transfer, tracks);
+
+        _notifier.Updates.Where(u => u.TrackPhase == TrackPhase.Reused).Select(u => u.CurrentStep)
+            .Should().Equal("Track 1/2 is already on Yoto", "Track 2/2 is already on Yoto");
+    }
+
+    [Fact]
     public async Task ATrackThatFails_IsNeverReportedAsUploaded_AndTheOnesBeforeItAre()
     {
         var (transfer, tracks) = await SeedTransferAsync(3);
