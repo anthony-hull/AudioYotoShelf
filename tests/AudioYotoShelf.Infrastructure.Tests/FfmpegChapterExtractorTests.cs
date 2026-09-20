@@ -11,7 +11,7 @@ public class FfmpegChapterExtractorTests
 
     public FfmpegChapterExtractorTests()
     {
-        _sut = new FfmpegChapterExtractor(Mock.Of<ILogger<FfmpegChapterExtractor>>());
+        _sut = new FfmpegChapterExtractor(Mock.Of<ILogger<FfmpegChapterExtractor>>(), new SystemProcessRunner());
     }
 
     [Fact]
