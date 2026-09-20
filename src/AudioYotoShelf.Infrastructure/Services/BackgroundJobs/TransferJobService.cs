@@ -49,6 +49,13 @@ public class TransferJobService(
                     null
             ), ct);
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // The person pressed Cancel, which is the transfer ending as asked. Rethrowing would make
+            // Hangfire count a failure and retry it, restarting what they just cancelled. A cancelled
+            // token is different (the server is stopping) and does propagate, so the job is requeued.
+            logger.LogInformation("Hangfire: Book transfer for item {ItemId} was cancelled", request.AbsLibraryItemId);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Hangfire: Book transfer failed for item {ItemId}",
@@ -78,6 +85,10 @@ public class TransferJobService(
                 ), ct);
             }
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            logger.LogInformation("Hangfire: Series transfer for {SeriesId} was cancelled", request.AbsSeriesId);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Hangfire: Series transfer failed for {SeriesId}",
@@ -101,6 +112,10 @@ public class TransferJobService(
                     "Retry complete",
                     null
             ), ct);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            logger.LogInformation("Hangfire: Retry of transfer {TransferId} was cancelled", transferId);
         }
         catch (Exception ex)
         {
