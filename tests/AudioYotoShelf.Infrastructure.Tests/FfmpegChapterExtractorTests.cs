@@ -324,9 +324,41 @@ public class FfmpegChapterExtractorTests : IDisposable
         File.Exists(listPath).Should().BeFalse();
     }
 
+    [Fact]
+    public async Task ExtractChapterAsync_WritesSecondsWithAPointEvenUnderACommaDecimalCulture()
+    {
+        CultureInfo.CurrentCulture = CommaDecimalCulture();
+        var input = NewInputFile();
+        FfmpegWritesItsOutputFile();
+
+        await _sut.ExtractChapterAsync(input, 12.5, 300.25, "m4a");
+
+        _runner.Calls.Should().ContainSingle().Which.Arguments.Should().Contain("-ss 12.500 -to 300.250 ");
+    }
+
+    private static CultureInfo CommaDecimalCulture()
+    {
+        // Built from the invariant culture so it does not depend on the machine's ICU data.
+        var culture = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+        culture.NumberFormat.NumberDecimalSeparator = ",";
+        return culture;
+    }
+
     // =========================================================================
     // SplitAsync
     // =========================================================================
+
+    [Fact]
+    public async Task SplitAsync_WritesTheSegmentLengthWithAPointEvenUnderACommaDecimalCulture()
+    {
+        CultureInfo.CurrentCulture = CommaDecimalCulture();
+        var input = NewInputFile();
+        _runner.OnRun = args => CreateSegments(QuotedPaths(args)[1], "000");
+
+        await _sut.SplitAsync(input, 90.5);
+
+        _runner.Calls.Should().ContainSingle().Which.Arguments.Should().Contain("-segment_time 90.500 ");
+    }
 
     [Fact]
     public async Task SplitAsync_UsesTheSegmentMuxerWithTheSegmentLengthAndStreamCopy()
