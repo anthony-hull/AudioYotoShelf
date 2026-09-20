@@ -9,17 +9,25 @@ namespace AudioYotoShelf.Infrastructure.Tests.Fixtures;
 /// </summary>
 public class InMemoryDbFixture : IDisposable
 {
+    private readonly DbContextOptions<AudioYotoShelfDbContext> _options;
+
     public AudioYotoShelfDbContext DbContext { get; }
 
     public InMemoryDbFixture()
     {
-        var options = new DbContextOptionsBuilder<AudioYotoShelfDbContext>()
+        _options = new DbContextOptionsBuilder<AudioYotoShelfDbContext>()
             .UseInMemoryDatabase(databaseName: $"TestDb_{Guid.NewGuid()}")
             .Options;
 
-        DbContext = new AudioYotoShelfDbContext(options);
+        DbContext = new AudioYotoShelfDbContext(_options);
         DbContext.Database.EnsureCreated();
     }
+
+    /// <summary>
+    /// A fresh context on the same database. Reading through it proves a change was saved, which
+    /// <c>DbContext.FindAsync</c> cannot: that returns the tracked instance without touching the store.
+    /// </summary>
+    public AudioYotoShelfDbContext NewContext() => new(_options);
 
     public void Dispose()
     {
