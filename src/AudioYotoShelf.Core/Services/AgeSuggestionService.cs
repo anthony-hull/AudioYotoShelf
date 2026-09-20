@@ -42,9 +42,9 @@ public class AgeSuggestionService : IAgeSuggestionService
 
         foreach (var (keywords, range) in GenreRules)
         {
-            if (genres.Any(g => keywords.Any(k => g.Contains(k, StringComparison.OrdinalIgnoreCase))))
+            var matchedKeyword = keywords.FirstOrDefault(k => genres.Any(g => g.Contains(k, StringComparison.OrdinalIgnoreCase)));
+            if (matchedKeyword is not null)
             {
-                var matchedKeyword = keywords.First(k => genres.Any(g => g.Contains(k, StringComparison.OrdinalIgnoreCase)));
                 signals.Add(new AgeSuggestionDetail("Genre", matchedKeyword, range.Weight));
                 weightedMinAges.Add((range.Min, range.Weight));
                 weightedMaxAges.Add((range.Max, range.Weight));
@@ -52,12 +52,13 @@ public class AgeSuggestionService : IAgeSuggestionService
         }
 
         // Signal 2: Description keyword matching
+        // Stryker disable once String : the fallback only has to contain no keyword, so any keyword-free text is equivalent
         var description = (metadata.Description ?? "").ToLowerInvariant();
         foreach (var (keywords, range) in KeywordRules)
         {
-            if (keywords.Any(k => description.Contains(k, StringComparison.OrdinalIgnoreCase)))
+            var matchedKeyword = keywords.FirstOrDefault(k => description.Contains(k, StringComparison.OrdinalIgnoreCase));
+            if (matchedKeyword is not null)
             {
-                var matchedKeyword = keywords.First(k => description.Contains(k, StringComparison.OrdinalIgnoreCase));
                 signals.Add(new AgeSuggestionDetail("Keyword", matchedKeyword, range.Weight));
                 weightedMinAges.Add((range.Min, range.Weight));
                 weightedMaxAges.Add((range.Max, range.Weight));
@@ -86,37 +87,25 @@ public class AgeSuggestionService : IAgeSuggestionService
         }
 
         // Calculate weighted averages
-        int suggestedMin;
-        int suggestedMax;
-        AgeRangeSource source;
-        string reason;
+        // The duration signal above is unconditional, so there is always at least one signal to average.
+        var totalWeight = weightedMinAges.Sum(x => x.Weight);
+        var suggestedMin = (int)Math.Round(weightedMinAges.Sum(x => x.Age * x.Weight) / (double)totalWeight);
+        var suggestedMax = (int)Math.Round(weightedMaxAges.Sum(x => x.Age * x.Weight) / (double)totalWeight);
 
-        if (weightedMinAges.Count > 0)
+        // Stryker disable once Linq : signals always holds the duration signal, so First() cannot be empty
+        var topSignal = signals.OrderByDescending(s => s.Weight).First();
+        var source = topSignal.Signal switch
         {
-            var totalWeight = weightedMinAges.Sum(x => x.Weight);
-            suggestedMin = (int)Math.Round(weightedMinAges.Sum(x => x.Age * x.Weight) / (double)totalWeight);
-            suggestedMax = (int)Math.Round(weightedMaxAges.Sum(x => x.Age * x.Weight) / (double)totalWeight);
-
-            var topSignal = signals.OrderByDescending(s => s.Weight).First();
-            source = topSignal.Signal switch
-            {
-                "Genre" => AgeRangeSource.GenreInferred,
-                "Keyword" => AgeRangeSource.KeywordInferred,
-                "Duration" => AgeRangeSource.DurationInferred,
-                _ => AgeRangeSource.Default
-            };
-            reason = $"Based on {topSignal.Signal.ToLowerInvariant()}: {topSignal.Value}";
-        }
-        else
-        {
-            suggestedMin = 5;
-            suggestedMax = 10;
-            source = AgeRangeSource.Default;
-            reason = "No metadata signals found, using default range";
-        }
+            "Genre" => AgeRangeSource.GenreInferred,
+            "Keyword" => AgeRangeSource.KeywordInferred,
+            "Duration" => AgeRangeSource.DurationInferred,
+            _ => AgeRangeSource.Default
+        };
+        var reason = $"Based on {topSignal.Signal.ToLowerInvariant()}: {topSignal.Value}";
 
         // Ensure min < max and clamp to reasonable bounds
         suggestedMin = Math.Clamp(suggestedMin, 0, 18);
+        // Stryker disable once Arithmetic : defensive guard — every rule is at least 3 years wide, so the lower bound never binds
         suggestedMax = Math.Clamp(suggestedMax, suggestedMin + 1, 18);
 
         return new AgeSuggestionResponse(suggestedMin, suggestedMax, reason, source, [.. signals]);

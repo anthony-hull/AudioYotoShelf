@@ -5,6 +5,12 @@ using FluentValidation;
 
 namespace AudioYotoShelf.Api.Configuration;
 
+internal static class AgeRange
+{
+    /// <summary>An age range is valid when either bound is unset, or the minimum is strictly below the maximum.</summary>
+    public static bool IsMinBelowMax(int? min, int? max) => !min.HasValue || !max.HasValue || min < max;
+}
+
 public class AbsConnectRequestValidator : AbstractValidator<AuthController.AbsConnectRequest>
 {
     /// <summary>Matches the AudiobookshelfToken column the key is stored in.</summary>
@@ -50,8 +56,7 @@ public class CreateTransferRequestValidator : AbstractValidator<CreateTransferRe
             .When(x => x.OverrideMaxAge.HasValue);
 
         RuleFor(x => x)
-            .Must(x => !x.OverrideMinAge.HasValue || !x.OverrideMaxAge.HasValue ||
-                       x.OverrideMinAge < x.OverrideMaxAge)
+            .Must(x => AgeRange.IsMinBelowMax(x.OverrideMinAge, x.OverrideMaxAge))
             .WithMessage("Min age must be less than max age");
     }
 }
@@ -70,6 +75,10 @@ public class CreateSeriesTransferRequestValidator : AbstractValidator<CreateSeri
         RuleFor(x => x.OverrideMaxAge)
             .InclusiveBetween(0, 18)
             .When(x => x.OverrideMaxAge.HasValue);
+
+        RuleFor(x => x)
+            .Must(x => AgeRange.IsMinBelowMax(x.OverrideMinAge, x.OverrideMaxAge))
+            .WithMessage("Min age must be less than max age");
     }
 }
 
@@ -97,8 +106,7 @@ public class BatchTransferRequestValidator : AbstractValidator<BatchTransferRequ
             .When(x => x.OverrideMaxAge.HasValue);
 
         RuleFor(x => x)
-            .Must(x => !x.OverrideMinAge.HasValue || !x.OverrideMaxAge.HasValue ||
-                       x.OverrideMinAge < x.OverrideMaxAge)
+            .Must(x => AgeRange.IsMinBelowMax(x.OverrideMinAge, x.OverrideMaxAge))
             .WithMessage("Min age must be less than max age");
     }
 }
@@ -156,8 +164,7 @@ public class UpdateSettingsRequestValidator : AbstractValidator<UpdateSettingsRe
             .When(x => x.DefaultMaxAge.HasValue);
 
         RuleFor(x => x)
-            .Must(x => !x.DefaultMinAge.HasValue || !x.DefaultMaxAge.HasValue ||
-                       x.DefaultMinAge < x.DefaultMaxAge)
+            .Must(x => AgeRange.IsMinBelowMax(x.DefaultMinAge, x.DefaultMaxAge))
             .WithMessage("Min age must be less than max age");
     }
 }

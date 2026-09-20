@@ -177,6 +177,7 @@ public class TransfersController(
             or Core.Enums.TransferStatus.Cancelled))
             return Conflict(new { Message = "Can only delete completed, failed, or cancelled transfers" });
 
+        // Stryker disable once Statement : redundant with the cascade in TrackMappingConfiguration; kept explicit so deletion does not depend on it
         db.TrackMappings.RemoveRange(transfer.TrackMappings);
         db.CardTransfers.Remove(transfer);
         await db.SaveChangesAsync(ct);
@@ -195,6 +196,7 @@ public class TransfersController(
             .Include(t => t.TrackMappings)
             .ToListAsync(ct);
 
+        // Stryker disable once Statement : redundant with the cascade in TrackMappingConfiguration; kept explicit so deletion does not depend on it
         foreach (var transfer in completed)
             db.TrackMappings.RemoveRange(transfer.TrackMappings);
         db.CardTransfers.RemoveRange(completed);

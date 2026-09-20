@@ -16,6 +16,7 @@ public static class YotoTokens
         AudioYotoShelfDbContext db, IYotoService yotoService, UserConnection user,
         ILogger logger, CancellationToken ct)
     {
+        // Stryker disable once Equality : `>=` vs `>` differs only when the expiry equals the tick five minutes from now, which no test can pin
         if (user.YotoTokenExpiresAt.HasValue &&
             user.YotoTokenExpiresAt.Value >= DateTimeOffset.UtcNow.AddMinutes(5))
         {
