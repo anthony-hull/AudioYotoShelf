@@ -517,7 +517,7 @@ public class AuthControllerTests : IDisposable
 
         var result = await rig.Controller.Logout();
 
-        result.Should().BeOfType<OkObjectResult>();
+        Json(result.Should().BeOfType<OkObjectResult>().Subject.Value).GetProperty("LoggedOut").GetBoolean().Should().BeTrue();
         rig.Authentication.Verify(a => a.SignOutAsync(
             It.IsAny<HttpContext>(), CookieAuthenticationDefaults.AuthenticationScheme, It.IsAny<AuthenticationProperties?>()), Times.Once);
     }
