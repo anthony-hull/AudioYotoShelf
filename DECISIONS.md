@@ -2,6 +2,20 @@
 
 Architectural decisions and hard-won constraints for the homelab fork. Grep this before touching an area.
 
+## 2026-09-20 — Cancelling a transfer stops it between tracks, and is not a failure
+
+**Decision.** The per-track loop looks for a cancel before each track, and a person's cancel ends the Hangfire job
+quietly. A cancelled token (the server stopping) still propagates, so that job is requeued.
+
+**Why (measured on a live 17-track book).** Cancel writes `Cancelled` to the transfer and nothing else; the running job
+looked only when its status next changed, which is after every track. It carried on for about 50 minutes, then threw
+"Transfer was cancelled". The job wrapper rethrew that as a failure, so Hangfire's automatic retry
+(`Retry attempt 1 of 1`) restarted the transfer 29 seconds later.
+
+**Limit.** A track already with Yoto cannot be cancelled there; its transcode finishes (about three minutes) and the
+transfer stops before the next one. Interrupting mid-transcode would need the poll loop to read the database, which it
+does not have a context for, and was not worth the machinery.
+
 ## 2026-09-20 — Connect to Audiobookshelf by single sign-on, through ABS's own API-client OpenID flow
 
 **Decision.** The app drives Audiobookshelf's OpenID flow for API clients (the one its mobile app uses) from the
