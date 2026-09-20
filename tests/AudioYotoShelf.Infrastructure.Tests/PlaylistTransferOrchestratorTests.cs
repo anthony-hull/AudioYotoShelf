@@ -15,7 +15,7 @@ using Moq;
 
 namespace AudioYotoShelf.Infrastructure.Tests;
 
-public class PlaylistTransferOrchestratorTests : IDisposable
+public partial class PlaylistTransferOrchestratorTests : IDisposable
 {
     private readonly InMemoryDbFixture _fixture;
     private readonly Mock<IAudiobookshelfService> _absService = new();
@@ -23,22 +23,12 @@ public class PlaylistTransferOrchestratorTests : IDisposable
     private readonly Mock<IIconGenerationService> _iconService = new();
     private readonly Mock<IChapterExtractor> _chapterExtractor = new();
     private readonly PlaylistTransferOrchestrator _sut;
+    private readonly string _tempDir = Directory.CreateTempSubdirectory("ays-playlist-").FullName;
 
     public PlaylistTransferOrchestratorTests()
     {
         _fixture = new InMemoryDbFixture();
-        var limits = new YotoCardLimits();
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Transfer:TempDirectory"] = Path.GetTempPath()
-            }).Build();
-
-        _sut = new PlaylistTransferOrchestrator(
-            _fixture.DbContext, _absService.Object, _yotoService.Object,
-            _iconService.Object, _chapterExtractor.Object,
-            new TrackPlanner(limits), new CardCapacityCalculator(limits),
-            config, Mock.Of<ILogger<PlaylistTransferOrchestrator>>());
+        _sut = CreateSut(_tempDir);
 
         _yotoService.Setup(s => s.UploadAndTranscodeAsync(
                 It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
@@ -55,7 +45,20 @@ public class PlaylistTransferOrchestratorTests : IDisposable
             .ReturnsAsync(() => new MemoryStream(new byte[100]));
     }
 
-    public void Dispose() => _fixture.Dispose();
+    private PlaylistTransferOrchestrator CreateSut(string tempDirectory) => new(
+        _fixture.DbContext, _absService.Object, _yotoService.Object,
+        _iconService.Object, _chapterExtractor.Object,
+        new TrackPlanner(new YotoCardLimits()), new CardCapacityCalculator(new YotoCardLimits()),
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Transfer:TempDirectory"] = tempDirectory })
+            .Build(),
+        Mock.Of<ILogger<PlaylistTransferOrchestrator>>());
+
+    public void Dispose()
+    {
+        _fixture.Dispose();
+        Directory.Delete(_tempDir, recursive: true);
+    }
 
     private async Task<Guid> SeedPlaylistAsync(PlaylistStatus status = PlaylistStatus.Draft,
         TrackGrouping grouping = TrackGrouping.Chapters, params PlaylistItem[] items)
