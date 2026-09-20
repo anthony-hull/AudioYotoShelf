@@ -20,6 +20,8 @@ const filterStatus = ref<TransferStatus | ''>('')
 
 // Track last SignalR update time per transfer for the activity indicator
 const lastUpdateTime = ref<Record<string, number>>({})
+// What the server last said it is doing per transfer, e.g. "Transcoding track 2/17 on Yoto… 55%".
+const liveStep = ref<Record<string, string | null>>({})
 const now = ref(Date.now())
 let nowTimer: ReturnType<typeof setInterval>
 
@@ -48,6 +50,7 @@ watch(
         transfer.status = update.status
         transfer.progressPercent = update.progressPercent
         transfer.errorMessage = update.errorMessage
+        liveStep.value[id] = update.currentStep
         lastUpdateTime.value[id] = Date.now()
         now.value = Date.now()
       }
@@ -196,7 +199,8 @@ function statusLabel(status: TransferStatus): string {
   const map: Record<TransferStatus, string> = {
     Pending: 'Pending',
     DownloadingAudio: 'Downloading',
-    UploadingToYoto: 'Uploading',
+    // Sending each file takes seconds; the minutes are Yoto transcoding it, so say both.
+    UploadingToYoto: 'Uploading & transcoding',
     AwaitingTranscode: 'Transcoding',
     GeneratingIcons: 'Generating Icons',
     CreatingCard: 'Creating Card',
@@ -205,6 +209,15 @@ function statusLabel(status: TransferStatus): string {
     Cancelled: 'Cancelled',
   }
   return map[status] ?? status
+}
+
+// The live step when the server has sent one; otherwise, after a page reload, how far along the
+// tracks are as of the last time the list was loaded.
+function stepText(transfer: TransferResponse): string {
+  const live = liveStep.value[transfer.id]
+  if (live) return live
+  const uploaded = transfer.tracks.filter((track) => track.isUploaded).length
+  return `${uploaded} of ${transfer.tracks.length} tracks on Yoto`
 }
 
 function timeSinceUpdate(transferId: string): string | null {
@@ -254,7 +267,7 @@ function formatDate(iso: string): string {
           <option value="">All Statuses</option>
           <option value="Pending">Pending</option>
           <option value="DownloadingAudio">Downloading</option>
-          <option value="UploadingToYoto">Uploading</option>
+          <option value="UploadingToYoto">Uploading &amp; transcoding</option>
           <option value="AwaitingTranscode">Transcoding</option>
           <option value="Completed">Completed</option>
           <option value="Failed">Failed</option>
@@ -334,6 +347,9 @@ function formatDate(iso: string): string {
               :style="{ width: `${transfer.progressPercent}%` }"
             />
           </div>
+          <p data-test="transfer-step" class="mt-1 text-xs text-gray-600 break-words">
+            {{ stepText(transfer) }}
+          </p>
           <div class="flex items-center justify-between mt-1">
             <p class="text-xs text-gray-400">{{ transfer.progressPercent }}%</p>
             <p v-if="timeSinceUpdate(transfer.id)" class="text-xs text-gray-400">
