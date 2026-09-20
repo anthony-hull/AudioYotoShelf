@@ -516,4 +516,233 @@ public class TransferOrchestratorTests : IDisposable
     {
         TransferOrchestrator.ParseSequence(input).Should().Be(expected);
     }
+
+    // =========================================================================
+    // Mutation-testing additions — cross-user isolation of reused uploads and icons
+    // =========================================================================
+
+    private void ServeItem(string itemId, AbsBookMedia? media = null) =>
+        _absService.Setup(s => s.GetLibraryItemAsync(
+                It.IsAny<string>(), It.IsAny<string>(), itemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestData.CreateAbsLibraryItem(itemId, media));
+
+    private Task<TransferResponse> TransferAsync(UserConnection user, string itemId) =>
+        _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest(itemId));
+
+    private void VerifyTrackUploads(Times times) =>
+        _yotoService.Verify(s => s.UploadAndTranscodeAsync(
+            It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
+            It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()), times);
+
+    private void VerifyIconGenerations(string chapterTitle, Times times) =>
+        _iconService.Verify(s => s.GenerateChapterIconAsync(
+            chapterTitle, It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), times);
+
+    private async Task<UserConnection> SeedUserAsync(string username)
+    {
+        var user = TestData.CreateUserConnection(username: username);
+        _db.UserConnections.Add(user);
+        await _db.SaveChangesAsync();
+        return user;
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_SameUserSendsTheSameAudioFileAgain_ReusesTheUpload()
+    {
+        var user = await SeedUserAsync();
+        ServeItem("book-a");
+        ServeItem("book-b");   // a different item that shares the same audio file inode ("ino-1")
+
+        await TransferAsync(user, "book-a");
+        await TransferAsync(user, "book-b");
+
+        VerifyTrackUploads(Times.Once());
+        var second = await _db.CardTransfers.Include(t => t.TrackMappings).SingleAsync(t => t.AbsLibraryItemId == "book-b");
+        second.TrackMappings.Single().YotoTrackUrl.Should().Be("yoto:#sha256_test_hash");
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_AnotherUsersUploadOfTheSameInode_IsNeverReused()
+    {
+        // Yoto media is account-scoped and inodes can collide across Audiobookshelf servers.
+        var first = await SeedUserAsync("first");
+        var second = await SeedUserAsync("second");
+        ServeItem("book-a");
+
+        await TransferAsync(first, "book-a");
+        await TransferAsync(second, "book-a");
+
+        VerifyTrackUploads(Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_SameUserSecondTransfer_ReusesTheirIconAndCountsTheUse()
+    {
+        var user = await SeedUserAsync();
+        ServeItem("book-a");
+        ServeItem("book-b");
+
+        await TransferAsync(user, "book-a");
+        await TransferAsync(user, "book-b");
+
+        VerifyIconGenerations("Chapter 1", Times.Once());
+        (await _db.GeneratedIcons.SingleAsync()).TimesUsed.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_AnotherUsersIdenticalIcon_IsNeverReused()
+    {
+        var first = await SeedUserAsync("first");
+        var second = await SeedUserAsync("second");
+        ServeItem("book-a");
+
+        await TransferAsync(first, "book-a");
+        await TransferAsync(second, "book-a");
+
+        VerifyIconGenerations("Chapter 1", Times.Exactly(2));
+        (await _db.GeneratedIcons.Select(i => i.UserConnectionId).Distinct().CountAsync()).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_ADifferentChapterTitle_GetsANewIconEvenForTheSameUser()
+    {
+        var user = await SeedUserAsync();
+        ServeItem("book-a");
+        ServeItem("book-b", TestData.CreateAbsMedia(chapters: [TestData.CreateAbsChapter(0, "Other")]));
+
+        await TransferAsync(user, "book-a");
+        await TransferAsync(user, "book-b");
+
+        VerifyIconGenerations("Chapter 1", Times.Once());
+        VerifyIconGenerations("Other", Times.Once());
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_StoredIconWithoutAYotoMediaId_IsRegenerated()
+    {
+        var user = await SeedUserAsync();
+        ServeItem("book-a");
+        ServeItem("book-b");
+        await TransferAsync(user, "book-a");
+        foreach (var icon in _db.GeneratedIcons) icon.YotoMediaId = null;   // never made it to Yoto
+        await _db.SaveChangesAsync();
+
+        await TransferAsync(user, "book-b");
+
+        VerifyIconGenerations("Chapter 1", Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_TwoChaptersWithTheSameTitle_ShareOneIconWithinTheRun()
+    {
+        var user = await SeedUserAsync();
+        ServeItem("book-a", TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1"), TestData.CreateAbsAudioFile(1, "ino-2")],
+            chapters: [TestData.CreateAbsChapter(0, "Same", 0, 300), TestData.CreateAbsChapter(1, "Same", 300, 600)]));
+
+        await TransferAsync(user, "book-a");
+
+        VerifyIconGenerations("Same", Times.Once());
+        (await _db.GeneratedIcons.SingleAsync()).TimesUsed.Should().Be(2);
+    }
+
+    private List<YotoCardContent> CardsSentToYoto() =>
+        _yotoService.Invocations
+            .Where(i => i.Method.Name == nameof(IYotoService.CreateOrUpdateCardAsync))
+            .Select(i => (YotoCardContent)i.Arguments[1])
+            .ToList();
+
+    [Fact]
+    public async Task TransferBookAsync_TwoChaptersSharingAnIcon_BothReferenceItOnTheCard()
+    {
+        var user = await SeedUserAsync();
+        ServeItem("book-a", TestData.CreateAbsMedia(
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1"), TestData.CreateAbsAudioFile(1, "ino-2")],
+            chapters: [TestData.CreateAbsChapter(0, "Same", 0, 300), TestData.CreateAbsChapter(1, "Same", 300, 600)]));
+
+        await TransferAsync(user, "book-a");
+
+        CardsSentToYoto().Single().Chapters.Select(c => c.Display?.Icon16X16)
+            .Should().Equal("yoto:#icon-media-1", "yoto:#icon-media-1");
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_ReusedIconFromAnEarlierTransfer_IsReferencedOnTheNewCard()
+    {
+        var user = await SeedUserAsync();
+        ServeItem("book-a");
+        ServeItem("book-b");
+
+        await TransferAsync(user, "book-a");
+        await TransferAsync(user, "book-b");
+
+        CardsSentToYoto().Last().Chapters.Single().Display!.Icon16X16.Should().Be("yoto:#icon-media-1");
+    }
+
+    // --- TransferSeriesAsync guards
+
+    [Fact]
+    public async Task TransferSeriesAsync_UnknownUser_Throws()
+    {
+        var act = () => _sut.TransferSeriesAsync(Guid.NewGuid(), TestData.CreateSeriesTransferRequest());
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("User connection not found");
+    }
+
+    [Fact]
+    public async Task TransferSeriesAsync_UserWithoutAYotoConnection_ThrowsBeforeTouchingTheSeries()
+    {
+        var user = TestData.CreateUserConnection(yotoAccessToken: null);
+        _db.UserConnections.Add(user);
+        await _db.SaveChangesAsync();
+        _absService.Setup(s => s.GetSeriesDetailAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestData.CreateAbsSeriesItem("Saga", 2));
+
+        var act = () => _sut.TransferSeriesAsync(user.Id, TestData.CreateSeriesTransferRequest());
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*Yoto*");
+    }
+
+    [Fact]
+    public async Task TransferSeriesAsync_RefreshesAnExpiringAudiobookshelfTokenBeforeReadingTheSeries()
+    {
+        var user = TestData.CreateUserConnection(
+            absToken: "stale", absRefreshToken: "refresh-old", absTokenExpiry: DateTimeOffset.UtcNow.AddMinutes(1));
+        _db.UserConnections.Add(user);
+        await _db.SaveChangesAsync();
+        _absService.Setup(s => s.RefreshTokenAsync(user.AudiobookshelfUrl, "refresh-old", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AbsLoginResponse(
+                new AbsUser("u1", "testuser", "user", "legacy", true, null, null, "renewed", "refresh-new"), null));
+        _absService.Setup(s => s.GetSeriesDetailAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestData.CreateAbsSeriesItem("Saga", 0));
+
+        await _sut.TransferSeriesAsync(user.Id, TestData.CreateSeriesTransferRequest());
+
+        _absService.Verify(s => s.GetSeriesDetailAsync(
+            user.AudiobookshelfUrl, "renewed", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // --- GetUserTransfersAsync ordering and paging
+
+    [Fact]
+    public async Task GetUserTransfersAsync_ReturnsNewestFirst_AndPagesByLimit()
+    {
+        var userId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        for (var i = 0; i < 5; i++)
+        {
+            var transfer = TestData.CreateCardTransfer(userConnectionId: userId, title: $"t{i}");
+            transfer.CreatedAt = now.AddHours(-i);   // t0 is the newest
+            _db.CardTransfers.Add(transfer);
+        }
+        await _db.SaveChangesAsync();
+
+        var firstPage = await _sut.GetUserTransfersAsync(userId, page: 0, limit: 2);
+        var secondPage = await _sut.GetUserTransfersAsync(userId, page: 1, limit: 2);
+
+        firstPage.Select(t => t.BookTitle).Should().Equal("t0", "t1");
+        secondPage.Select(t => t.BookTitle).Should().Equal("t2", "t3");
+    }
 }
