@@ -129,7 +129,8 @@ public class AdminControllerTests : IDisposable
             Transfer(alice, "a", TransferStatus.Completed, DaysAgo(3)),
             Transfer(alice, "b", TransferStatus.Completed, DaysAgo(20)),
             Transfer(bob, "c", TransferStatus.Failed, DaysAgo(3)),
-            Transfer(bob, "d", TransferStatus.Pending, DaysAgo(40)));
+            Transfer(bob, "d", TransferStatus.Pending, DaysAgo(40)),
+            Transfer(bob, "e", TransferStatus.Pending, DaysAgo(1)));   // 3 in the 7-day window, 2 outside it
         _db.Playlists.AddRange(
             new Playlist { Name = "One", UserConnectionId = alice.Id },
             new Playlist { Name = "Two", UserConnectionId = bob.Id });
@@ -141,8 +142,8 @@ public class AdminControllerTests : IDisposable
             TotalUsers: 4, AbsConnectedUsers: 3, YotoConnectedUsers: 3, AdminUsers: 1,
             ActiveUsers7d: 1, ActiveUsers30d: 2,
             TotalLogins: 3, Logins7d: 1, Logins30d: 2,
-            TotalTransfers: 4, CompletedTransfers: 2, FailedTransfers: 1,
-            TransferSuccessRate: 50, Transfers7d: 2,
+            TotalTransfers: 5, CompletedTransfers: 2, FailedTransfers: 1,
+            TransferSuccessRate: 40, Transfers7d: 3,
             TotalPlaylists: 2));
     }
 
@@ -216,13 +217,14 @@ public class AdminControllerTests : IDisposable
             Transfer(user, "a", TransferStatus.Pending, At(0, 12)),
             Transfer(user, "b", TransferStatus.Pending, At(2, 8)),
             Transfer(user, "c", TransferStatus.Pending, At(2, 9)),
-            Transfer(user, "d", TransferStatus.Pending, At(3, 23, 59, 59)));
+            Transfer(user, "first-instant", TransferStatus.Pending, At(2, 0)),       // first instant of the window: in
+            Transfer(user, "d", TransferStatus.Pending, At(3, 23, 59, 59)));         // last second before it: out
         await _db.SaveChangesAsync();
 
         var points = (await GetOk<IEnumerable<UsagePoint>>(_sut.Usage(days: 3, CancellationToken.None))).ToList();
 
         points.Should().Equal(
-            new UsagePoint(today.AddDays(-2), Logins: 1, Transfers: 2),
+            new UsagePoint(today.AddDays(-2), Logins: 1, Transfers: 3),
             new UsagePoint(today.AddDays(-1), Logins: 2, Transfers: 0),
             new UsagePoint(today, Logins: 2, Transfers: 1));
     }
