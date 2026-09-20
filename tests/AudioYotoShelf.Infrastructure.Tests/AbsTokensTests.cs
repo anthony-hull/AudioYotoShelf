@@ -196,4 +196,89 @@ public class AbsTokensTests : IDisposable
 
         token.Should().Be("fresh");
     }
+
+    // =========================================================================
+    // Mutation-testing additions
+    // =========================================================================
+
+    /// <summary>A JWT whose payload is the given raw JSON, so its base64 length (and padding) is controllable.</summary>
+    private static string MakeJwtWithPayload(string json)
+    {
+        static string B64Url(string s) =>
+            Convert.ToBase64String(Encoding.UTF8.GetBytes(s)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        return $"{B64Url("{\"alg\":\"HS256\"}")}.{B64Url(json)}.sig";
+    }
+
+    [Theory]
+    [InlineData(1_000_000L)]      // 15-byte payload: base64 needs no padding
+    [InlineData(10_000_000L)]     // 16-byte payload: two '=' of padding
+    [InlineData(100_000_000L)]    // 17-byte payload: one '=' of padding
+    public void GetJwtExpiry_DecodesPayloadsOfEveryBase64PaddingLength(long expSeconds)
+    {
+        var result = AbsTokens.GetJwtExpiry(MakeJwtWithPayload($"{{\"exp\":{expSeconds}}}"));
+
+        result!.Value.ToUnixTimeSeconds().Should().Be(expSeconds);
+    }
+
+    [Theory]
+    [InlineData("{\"sub\":\"u1\"}")]              // no exp claim
+    [InlineData("{\"exp\":\"soon\"}")]            // exp is not a number
+    [InlineData("not json at all")]
+    public void GetJwtExpiry_PayloadWithoutAUsableExp_ReturnsNull(string payload)
+    {
+        AbsTokens.GetJwtExpiry(MakeJwtWithPayload(payload)).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(4, true)]     // inside the five-minute window: refresh
+    [InlineData(6, false)]    // outside it: reuse
+    public async Task EnsureValidAsync_RefreshesOnlyInsideTheFiveMinuteWindow(int minutesToExpiry, bool shouldRefresh)
+    {
+        var user = TestData.CreateUserConnection(
+            absToken: "current", absRefreshToken: "refresh",
+            absTokenExpiry: DateTimeOffset.UtcNow.AddMinutes(minutesToExpiry));
+        _dbFixture.DbContext.UserConnections.Add(user);
+        await _dbFixture.DbContext.SaveChangesAsync();
+        var absService = new Mock<IAudiobookshelfService>();
+        absService.Setup(s => s.RefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LoginResponse("renewed", "refresh-2"));
+
+        var token = await AbsTokens.EnsureValidAsync(
+            _dbFixture.DbContext, absService.Object, user, Mock.Of<ILogger>(), CancellationToken.None);
+
+        token.Should().Be(shouldRefresh ? "renewed" : "current");
+    }
+
+    [Fact]
+    public async Task EnsureValidAsync_RefreshTokenButNoKnownExpiry_ReturnsExistingToken()
+    {
+        var user = TestData.CreateUserConnection(absToken: "opaque", absRefreshToken: "refresh", absTokenExpiry: null);
+        var absService = new Mock<IAudiobookshelfService>(MockBehavior.Strict);
+
+        var token = await AbsTokens.EnsureValidAsync(
+            _dbFixture.DbContext, absService.Object, user, Mock.Of<ILogger>(), CancellationToken.None);
+
+        token.Should().Be("opaque");
+    }
+
+    [Fact]
+    public async Task EnsureValidAsync_PersistsTheRefreshedTokens()
+    {
+        var user = TestData.CreateUserConnection(
+            absToken: "stale", absRefreshToken: "refresh-old",
+            absTokenExpiry: DateTimeOffset.UtcNow.AddMinutes(1));
+        _dbFixture.DbContext.UserConnections.Add(user);
+        await _dbFixture.DbContext.SaveChangesAsync();
+        var absService = new Mock<IAudiobookshelfService>();
+        absService.Setup(s => s.RefreshTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(LoginResponse("renewed", "refresh-new"));
+
+        await AbsTokens.EnsureValidAsync(
+            _dbFixture.DbContext, absService.Object, user, Mock.Of<ILogger>(), CancellationToken.None);
+
+        await using var other = _dbFixture.NewContext();
+        var stored = await other.UserConnections.FindAsync(user.Id);
+        (stored!.AudiobookshelfToken, stored.AudiobookshelfRefreshToken).Should().Be(("renewed", "refresh-new"));
+    }
 }

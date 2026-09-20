@@ -128,6 +128,7 @@ var cardLimits = builder.Configuration.GetSection(AudioYotoShelf.Core.Configurat
 builder.Services.AddSingleton(cardLimits);
 builder.Services.AddSingleton<ITrackPlanner, TrackPlanner>();
 builder.Services.AddSingleton<ICardCapacityCalculator, CardCapacityCalculator>();
+builder.Services.AddSingleton<IProcessRunner, SystemProcessRunner>();
 builder.Services.AddScoped<IChapterExtractor, FfmpegChapterExtractor>();
 builder.Services.AddScoped<GeminiIconGenerationService>();
 builder.Services.AddScoped<IIconGenerationService, RateLimitedIconService>();

@@ -22,8 +22,11 @@ public class HealthController(
         // Postgres
         try
         {
-            await db.Database.CanConnectAsync(ct);
-            checks["postgres"] = new { status = "healthy" };
+            // CanConnectAsync reports an unreachable server by returning false, not by throwing.
+            if (await db.Database.CanConnectAsync(ct))
+                checks["postgres"] = new { status = "healthy" };
+            else
+                checks["postgres"] = new { status = "unhealthy", error = "Cannot connect to PostgreSQL" };
         }
         catch (Exception ex)
         {

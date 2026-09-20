@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Services.Audiobookshelf;
@@ -353,6 +354,391 @@ public class AudiobookshelfServiceTests
     }
 
     // =========================================================================
+    // Mutation-testing additions
+    // =========================================================================
+
+    private static readonly AbsLoginResponse SomeLogin = new(
+        new AbsUser("u1", "alice", "user", "legacy", true, null, null, "access", "refresh"), "lib-1");
+
+    // --- LoginAsync
+
+    [Fact]
+    public async Task LoginAsync_PostsCredentialsAsJsonAndAsksForTokensInTheBody()
+    {
+        _handler.SetupJsonResponse(SomeLogin);
+
+        var result = await _sut.LoginAsync("http://abs.local", "alice", "s3cret");
+
+        _handler.LastRequestMethod.Should().Be(HttpMethod.Post);
+        _handler.LastRequestUri.Should().Be("/login");
+        _handler.LastHeaders["x-return-tokens"].Should().Be("true");
+        using var body = JsonDocument.Parse(_handler.LastBody!);
+        (body.RootElement.GetProperty("username").GetString(), body.RootElement.GetProperty("password").GetString())
+            .Should().Be(("alice", "s3cret"));
+        result.User.Username.Should().Be("alice");
+    }
+
+    [Fact]
+    public async Task LoginAsync_ServerRejectsTheCredentials_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.Unauthorized, "nope");
+
+        var act = () => _sut.LoginAsync("http://abs.local", "alice", "wrong");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task LoginAsync_EmptyBody_ThrowsInsteadOfReturningNull()
+    {
+        _handler.SetupResponse(HttpStatusCode.OK, "null");
+
+        var act = () => _sut.LoginAsync("http://abs.local", "alice", "pw");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*login*");
+    }
+
+    // --- RefreshTokenAsync / AuthorizeApiKeyAsync
+
+    [Fact]
+    public async Task RefreshTokenAsync_SendsTheRefreshTokenInAHeaderAndAsksForRotatedTokensInTheBody()
+    {
+        _handler.SetupJsonResponse(SomeLogin);
+
+        await _sut.RefreshTokenAsync("http://abs.local", "old-refresh");
+
+        _handler.LastHeaders["x-refresh-token"].Should().Be("old-refresh");
+        _handler.LastHeaders["x-return-tokens"].Should().Be("true");
+    }
+
+    [Fact]
+    public async Task RefreshTokenAsync_ServerRejectsTheToken_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.Unauthorized, "expired");
+
+        var act = () => _sut.RefreshTokenAsync("http://abs.local", "old-refresh");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task RefreshTokenAsync_EmptyBody_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.OK, "null");
+
+        var act = () => _sut.RefreshTokenAsync("http://abs.local", "old-refresh");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*refresh*");
+    }
+
+    [Fact]
+    public async Task AuthorizeApiKeyAsync_EmptyBody_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.OK, "null");
+
+        var act = () => _sut.AuthorizeApiKeyAsync("http://abs.local", "key");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*authorize*");
+    }
+
+    // --- ValidateTokenAsync
+
+    [Fact]
+    public async Task ValidateTokenAsync_ServerSaysUnauthorized_IsFalse()
+    {
+        _handler.SetupResponse(HttpStatusCode.Unauthorized, "");
+
+        (await _sut.ValidateTokenAsync("http://abs.local", "expired")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ValidateTokenAsync_ServerUnreachable_IsFalseRatherThanAnException()
+    {
+        _handler.ThrowOnSend = new HttpRequestException("connection refused");
+
+        (await _sut.ValidateTokenAsync("http://abs.local", "token")).Should().BeFalse();
+    }
+
+    // --- GetLibrariesAsync
+
+    [Fact]
+    public async Task GetLibrariesAsync_ReturnsTheLibrariesFromTheWrapper()
+    {
+        _handler.SetupJsonResponse(new { libraries = new[] { new { id = "lib-1", name = "Kids", mediaType = "book" } } });
+
+        var result = await _sut.GetLibrariesAsync("http://abs.local", "token");
+
+        _handler.LastRequestUri.Should().Be("/api/libraries");
+        result.Select(l => (l.Id, l.Name)).Should().Equal(("lib-1", "Kids"));
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    public async Task GetLibrariesAsync_NoLibrariesInTheResponse_ReturnsAnEmptyArray(string body)
+    {
+        _handler.SetupResponse(HttpStatusCode.OK, body);
+
+        (await _sut.GetLibrariesAsync("http://abs.local", "token")).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetLibrariesAsync_ServerError_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.InternalServerError, "boom");
+
+        var act = () => _sut.GetLibrariesAsync("http://abs.local", "token");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    // --- GetLibraryItemsAsync
+
+    [Fact]
+    public async Task GetLibraryItemsAsync_Descending_AppendsDescOnlyWhenAsked()
+    {
+        SetupItemsResponse();
+
+        await _sut.GetLibraryItemsAsync("http://abs.local", "token", "lib-1", desc: true);
+        _handler.LastRequestUri.Should().Contain("&desc=1");
+
+        await _sut.GetLibraryItemsAsync("http://abs.local", "token", "lib-1", desc: false);
+        _handler.LastRequestUri.Should().NotContain("desc");
+    }
+
+    [Fact]
+    public async Task GetLibraryItemsAsync_EmptyBody_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.OK, "null");
+
+        var act = () => _sut.GetLibraryItemsAsync("http://abs.local", "token", "lib-1");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*library items*");
+    }
+
+    // --- SearchLibraryItemsAsync
+
+    [Fact]
+    public async Task SearchLibraryItemsAsync_ResponseWithoutABookList_ReturnsEmpty()
+    {
+        _handler.SetupJsonResponseFor("/search", new { });
+
+        (await _sut.SearchLibraryItemsAsync("http://abs.local", "token", "lib-1", "zzz")).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SearchLibraryItemsAsync_SkipsMatchesThatCarryNoItem()
+    {
+        _handler.SetupJsonResponseFor("/search", new
+        {
+            book = new object[] { new { libraryItem = (object?)null }, new { libraryItem = TestData.CreateAbsLibraryItem("kept") } }
+        });
+
+        var result = await _sut.SearchLibraryItemsAsync("http://abs.local", "token", "lib-1", "q");
+
+        result.Select(i => i.Id).Should().Equal("kept");
+    }
+
+    // --- GetLibraryItemAsync / GetCoverImageAsync / GetSeriesAsync
+
+    [Fact]
+    public async Task GetLibraryItemAsync_RequestsTheExpandedItem()
+    {
+        _handler.SetupJsonResponse(TestData.CreateAbsLibraryItem("book-7"));
+
+        var result = await _sut.GetLibraryItemAsync("http://abs.local", "token", "book-7");
+
+        _handler.LastRequestUri.Should().Be("/api/items/book-7?expanded=1");
+        result.Id.Should().Be("book-7");
+    }
+
+    [Fact]
+    public async Task GetLibraryItemAsync_ServerError_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.NotFound, "gone");
+
+        var act = () => _sut.GetLibraryItemAsync("http://abs.local", "token", "book-7");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task GetLibraryItemAsync_EmptyBody_ThrowsNamingTheItem()
+    {
+        _handler.SetupResponse(HttpStatusCode.OK, "null");
+
+        var act = () => _sut.GetLibraryItemAsync("http://abs.local", "token", "book-7");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*book-7*");
+    }
+
+    [Fact]
+    public async Task GetCoverImageAsync_StreamsTheCoverBytes()
+    {
+        _handler.SetupBinaryResponse([1, 2, 3], "image/jpeg", lengthKnown: true);
+
+        await using var stream = await _sut.GetCoverImageAsync("http://abs.local", "token", "book-7");
+
+        _handler.LastRequestUri.Should().Be("/api/items/book-7/cover");
+        var copy = new MemoryStream();
+        await stream.CopyToAsync(copy);
+        copy.ToArray().Should().Equal(1, 2, 3);
+    }
+
+    [Fact]
+    public async Task GetCoverImageAsync_ServerError_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.NotFound, "no cover");
+
+        var act = () => _sut.GetCoverImageAsync("http://abs.local", "token", "book-7");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task GetSeriesAsync_RequestsThePageAndReturnsTheSeries()
+    {
+        _handler.SetupJsonResponse(new AbsSeriesResponse([TestData.CreateAbsSeriesItem("Saga")], 1, 5, 2));
+
+        var result = await _sut.GetSeriesAsync("http://abs.local", "token", "lib-1", page: 2, limit: 5);
+
+        _handler.LastRequestUri.Should().Be("/api/libraries/lib-1/series?page=2&limit=5");
+        result.Results.Single().Name.Should().Be("Saga");
+    }
+
+    [Fact]
+    public async Task GetSeriesAsync_ServerError_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.InternalServerError, "boom");
+
+        var act = () => _sut.GetSeriesAsync("http://abs.local", "token", "lib-1");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task GetSeriesAsync_EmptyBody_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.OK, "null");
+
+        var act = () => _sut.GetSeriesAsync("http://abs.local", "token", "lib-1");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*series*");
+    }
+
+    // --- GetSeriesDetailAsync
+
+    private static AbsLibraryItem ItemInSeries(string id, string? seriesId, string? sequence, double duration)
+    {
+        var metadata = TestData.CreateAbsMetadata() with
+        {
+            Series = seriesId is null ? [] : [new AbsSeries(seriesId, "Saga", sequence)],
+        };
+        return TestData.CreateAbsLibraryItem(id, TestData.CreateAbsMedia(metadata, duration: duration));
+    }
+
+    [Fact]
+    public async Task GetSeriesDetailAsync_SumsTheBookDurations_AndTakesTheSequenceOfThisSeriesOnly()
+    {
+        _handler.SetupJsonResponseFor("/api/series/", new { id = "s1", name = "Saga", description = "About" });
+        _handler.SetupJsonResponseFor("/items", new AbsLibraryItemsResponse(
+        [
+            ItemInSeries("b1", "s1", "1", 100.9),
+            ItemInSeries("b2", "s1", "2", 200),
+            ItemInSeries("b3", "other-series", "7", 50),   // sequence belongs to another series
+            ItemInSeries("b4", null, null, 0),             // in no series at all
+        ], 4, 500, 0));
+
+        var result = await _sut.GetSeriesDetailAsync("http://abs.local", "token", "lib-1", "s1");
+
+        result.Books.Select(b => (b.Id, b.Sequence)).Should().Equal(("b1", "1"), ("b2", "2"), ("b3", null), ("b4", null));
+        result.TotalDuration.Should().Be(350);   // 100.9 + 200 + 50, truncated
+        result.Description.Should().Be("About");
+    }
+
+    [Fact]
+    public async Task GetSeriesDetailAsync_AsksForAscendingUncollapsedItems()
+    {
+        _handler.SetupJsonResponseFor("/api/series/", new { id = "s1", name = "Saga", description = (string?)null });
+        _handler.SetupJsonResponseFor("/items", new AbsLibraryItemsResponse([], 0, 500, 0));
+
+        await _sut.GetSeriesDetailAsync("http://abs.local", "token", "lib-1", "s1");
+
+        _handler.LastRequestUri.Should().NotContain("desc").And.NotContain("collapseseries");
+    }
+
+    [Fact]
+    public async Task GetSeriesDetailAsync_ItemsResponseWithoutResults_HasNoBooks()
+    {
+        _handler.SetupJsonResponseFor("/api/series/", new { id = "s1", name = "Saga", description = (string?)null });
+        _handler.SetupJsonResponseFor("/items", new { total = 0, limit = 500, page = 0 });
+
+        var result = await _sut.GetSeriesDetailAsync("http://abs.local", "token", "lib-1", "s1");
+
+        (result.Books, result.TotalDuration).Should().Be((Array.Empty<AbsSeriesBook>(), 0));
+    }
+
+    [Fact]
+    public async Task GetSeriesDetailAsync_SeriesMetadataMissing_FallsBackToAPlaceholderName()
+    {
+        _handler.SetupJsonResponseFor("/api/series/", (object?)null);
+        _handler.SetupJsonResponseFor("/items", new AbsLibraryItemsResponse([], 0, 500, 0));
+
+        var result = await _sut.GetSeriesDetailAsync("http://abs.local", "token", "lib-1", "s1");
+
+        (result.Name, result.Description).Should().Be(("Unknown Series", null));
+    }
+
+    // --- Audio download
+
+    [Fact]
+    public async Task DownloadAudioFileWithMetadataAsync_ReportsLengthAndTypeFromTheHeaders()
+    {
+        _handler.SetupBinaryResponse([1, 2, 3, 4], "audio/mp4", lengthKnown: true);
+
+        var (stream, length, contentType) = await _sut.DownloadAudioFileWithMetadataAsync(
+            "http://abs.local", "token", "book-7", "ino-3");
+
+        await using var _ = stream;
+        _handler.LastRequestUri.Should().Be("/api/items/book-7/file/ino-3/download");
+        (length, contentType).Should().Be((4L, "audio/mp4"));
+    }
+
+    [Fact]
+    public async Task DownloadAudioFileWithMetadataAsync_NoLengthOrType_UsesUnknownLengthAndMpeg()
+    {
+        _handler.SetupBinaryResponse([1, 2], contentType: null, lengthKnown: false);
+
+        var (stream, length, contentType) = await _sut.DownloadAudioFileWithMetadataAsync(
+            "http://abs.local", "token", "book-7", "ino-3");
+
+        await using var _ = stream;
+        (length, contentType).Should().Be((-1L, "audio/mpeg"));
+    }
+
+    [Fact]
+    public async Task DownloadAudioFileWithMetadataAsync_ServerError_Throws()
+    {
+        _handler.SetupResponse(HttpStatusCode.NotFound, "missing");
+
+        var act = () => _sut.DownloadAudioFileWithMetadataAsync("http://abs.local", "token", "book-7", "ino-3");
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task DownloadAudioFileAsync_ReturnsTheFileBytes()
+    {
+        _handler.SetupBinaryResponse([5, 6, 7], "audio/mpeg", lengthKnown: true);
+
+        await using var stream = await _sut.DownloadAudioFileAsync("http://abs.local", "token", "book-7", "ino-3");
+
+        var copy = new MemoryStream();
+        await stream.CopyToAsync(copy);
+        copy.ToArray().Should().Equal(5, 6, 7);
+    }
+
+    // =========================================================================
     // Helper: fake HTTP handler
     // =========================================================================
 
@@ -571,6 +957,15 @@ public class AudiobookshelfServiceTests
         public string? LastHost { get; private set; }
         public string? LastForwardedProto { get; private set; }
         public string? LastCookie { get; private set; }
+        public Dictionary<string, string> LastHeaders { get; private set; } = [];
+        public string? LastBody { get; private set; }
+
+        /// <summary>When set, sending throws this instead of returning a response (a network failure).</summary>
+        public Exception? ThrowOnSend { get; set; }
+
+        private byte[]? _binary;
+        private string? _binaryContentType;
+        private bool _binaryLengthKnown;
 
         private string? _location;
         private string[] _setCookies = [];
@@ -607,9 +1002,31 @@ public class AudiobookshelfServiceTests
             _content = content;
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        /// <summary>Answer every request with raw bytes (an audio file), optionally without a Content-Length.</summary>
+        public void SetupBinaryResponse(byte[] bytes, string? contentType, bool lengthKnown)
+        {
+            _binary = bytes;
+            _binaryContentType = contentType;
+            _binaryLengthKnown = lengthKnown;
+        }
+
+        private sealed class UnknownLengthContent(byte[] bytes) : HttpContent
+        {
+            protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+                stream.WriteAsync(bytes).AsTask();
+
+            protected override bool TryComputeLength(out long length)
+            {
+                length = 0;
+                return false;
+            }
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (ThrowOnSend is not null) throw ThrowOnSend;
+
             var path = request.RequestUri?.PathAndQuery ?? "";
             LastRequestUri = path;
             LastRequestMethod = request.Method;
@@ -617,6 +1034,16 @@ public class AudiobookshelfServiceTests
             LastHost = request.Headers.Host;
             LastForwardedProto = request.Headers.TryGetValues("X-Forwarded-Proto", out var proto) ? proto.Single() : null;
             LastCookie = request.Headers.TryGetValues("Cookie", out var cookie) ? string.Join("; ", cookie) : null;
+            LastHeaders = request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value));
+            LastBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            if (_binary is not null)
+            {
+                HttpContent binary = _binaryLengthKnown ? new ByteArrayContent(_binary) : new UnknownLengthContent(_binary);
+                if (_binaryContentType is not null)
+                    binary.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_binaryContentType);
+                return new HttpResponseMessage(_statusCode) { Content = binary };
+            }
 
             var match = _routes.FirstOrDefault(r => path.Contains(r.PathContains));
             var content = match.Json ?? _content;
@@ -630,7 +1057,7 @@ public class AudiobookshelfServiceTests
             foreach (var setCookie in _setCookies)
                 response.Headers.TryAddWithoutValidation("Set-Cookie", setCookie);
 
-            return Task.FromResult(response);
+            return response;
         }
     }
 }

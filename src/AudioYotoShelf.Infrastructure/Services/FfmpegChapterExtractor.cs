@@ -1,10 +1,9 @@
-using System.Diagnostics;
 using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace AudioYotoShelf.Infrastructure.Services;
 
-public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IChapterExtractor
+public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IProcessRunner processRunner) : IChapterExtractor
 {
     public async Task<string> ExtractChapterAsync(
         string inputFilePath, double startSeconds, double endSeconds,
@@ -22,7 +21,9 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IC
             Path.GetTempPath(),
             $"chapter_{Guid.NewGuid():N}.{outputFormat}");
 
-        var args = $"-i \"{inputFilePath}\" -ss {startSeconds:F3} -to {endSeconds:F3} -c copy -y \"{outputPath}\"";
+        // ffmpeg parses a decimal point only; the current culture must not turn 12.500 into 12,500.
+        var args = FormattableString.Invariant(
+            $"-i \"{inputFilePath}\" -ss {startSeconds:F3} -to {endSeconds:F3} -c copy -y \"{outputPath}\"");
 
         await RunFfmpegAsync(args, "chapter extraction", ct);
 
@@ -76,7 +77,7 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IC
         var token = Guid.NewGuid().ToString("N");
         var pattern = Path.Combine(Path.GetTempPath(), $"segment_{token}_%03d.{outputFormat}");
 
-        var args = $"-i \"{inputFilePath}\" -f segment -segment_time {segmentSeconds:F3} " +
+        var args = FormattableString.Invariant($"-i \"{inputFilePath}\" -f segment -segment_time {segmentSeconds:F3} ") +
                    $"-c copy -reset_timestamps 1 -y \"{pattern}\"";
         await RunFfmpegAsync(args, "split", ct);
 
@@ -98,29 +99,13 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IC
     {
         logger.LogInformation("ffmpeg {Operation}: {Args}", operation, args);
 
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "ffmpeg",
-                Arguments = args,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
+        var result = await processRunner.RunAsync("ffmpeg", args, captureStandardError: true, ct);
 
-        process.Start();
-
-        var stderr = await process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-
-        if (process.ExitCode != 0)
+        if (result.ExitCode != 0)
         {
             logger.LogError("FFmpeg {Operation} failed with exit code {ExitCode}: {Stderr}",
-                operation, process.ExitCode, stderr);
-            throw new InvalidOperationException($"FFmpeg {operation} failed: {stderr}");
+                operation, result.ExitCode, result.StandardError);
+            throw new InvalidOperationException($"FFmpeg {operation} failed: {result.StandardError}");
         }
     }
 
@@ -128,22 +113,8 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IC
     {
         try
         {
-            var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "ffmpeg",
-                    Arguments = "-version",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.Start();
-            await process.WaitForExitAsync(ct);
-            return process.ExitCode == 0;
+            var result = await processRunner.RunAsync("ffmpeg", "-version", captureStandardError: false, ct);
+            return result.ExitCode == 0;
         }
         catch
         {

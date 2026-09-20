@@ -179,4 +179,92 @@ public class RateLimitedIconServiceTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new RateLimitedIconService.CountWrapper(count));
     }
+
+    // =========================================================================
+    // Mutation-testing additions
+    // =========================================================================
+
+    private RateLimitedIconService SutLoggingTo(Mock<ILogger<RateLimitedIconService>> logger) =>
+        new(_innerMock.Object, _cacheMock.Object, logger.Object);
+
+    private static void VerifyWarnings(Mock<ILogger<RateLimitedIconService>> logger, Times times) =>
+        logger.Verify(l => l.Log(LogLevel.Warning, It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(),
+            It.IsAny<Exception?>(), (Func<It.IsAnyType, Exception?, string>)It.IsAny<object>()), times);
+
+    private void VerifyCounterSetTo(int count) =>
+        _cacheMock.Verify(c => c.SetAsync(
+            It.Is<string>(k => k.StartsWith("gemini:count:")),
+            It.Is<RateLimitedIconService.CountWrapper>(w => w.Count == count),
+            It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
+
+    [Theory]
+    [InlineData(5, 6)]
+    [InlineData(0, 1)]
+    public async Task GenerateIcon_StoresTheCountPlusOne(int before, int expected)
+    {
+        SetupCount(before);
+        _innerMock.Setup(s => s.GenerateIconAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new byte[] { 1 });
+
+        await _sut.GenerateIconAsync("test");
+
+        VerifyCounterSetTo(expected);
+    }
+
+    [Fact]
+    public async Task GenerateIcon_NoCounterYetToday_StartsAtOne()
+    {
+        _cacheMock.Setup(c => c.GetAsync<RateLimitedIconService.CountWrapper>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((RateLimitedIconService.CountWrapper?)null);
+        _innerMock.Setup(s => s.GenerateIconAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new byte[] { 1 });
+
+        await _sut.GenerateIconAsync("test");
+
+        VerifyCounterSetTo(1);
+    }
+
+    [Fact]
+    public async Task GenerateChapterIcon_UnderTheLimit_DelegatesAndCountsAgainstTheQuota()
+    {
+        SetupCount(7);
+        _innerMock.Setup(s => s.GenerateChapterIconAsync("Ch", "Book", "fantasy", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new byte[] { 9 });
+
+        var result = await _sut.GenerateChapterIconAsync("Ch", "Book", "fantasy");
+
+        result.Should().Equal(9);
+        VerifyCounterSetTo(8);
+    }
+
+    [Fact]
+    public async Task IncrementCount_KeepsTheCounterUntilAnHourAfterMidnightUtc()
+    {
+        SetupCount(1);
+        _innerMock.Setup(s => s.GenerateIconAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new byte[] { 1 });
+        TimeSpan? ttl = null;
+        _cacheMock.Setup(c => c.SetAsync(It.IsAny<string>(), It.IsAny<RateLimitedIconService.CountWrapper>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, RateLimitedIconService.CountWrapper, TimeSpan?, CancellationToken>((_, _, t, _) => ttl = t)
+            .Returns(Task.CompletedTask);
+        var now = DateTime.UtcNow;
+        var expected = now.Date.AddDays(1) - now + TimeSpan.FromHours(1);
+
+        await _sut.GenerateIconAsync("test");
+
+        ttl.Should().BeCloseTo(expected, TimeSpan.FromMinutes(1));
+    }
+
+    [Theory]
+    [InlineData(RateLimitedIconService.DailyLimit - 22, false)]   // counter becomes 469
+    [InlineData(RateLimitedIconService.DailyLimit - 21, true)]    // counter becomes 470: the warning starts here
+    [InlineData(RateLimitedIconService.DailyLimit - 2, true)]
+    public async Task GenerateIcon_WarnsOnceTheCounterIsWithinTwentyOfTheLimit(int before, bool shouldWarn)
+    {
+        SetupCount(before);
+        _innerMock.Setup(s => s.GenerateIconAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new byte[] { 1 });
+        var logger = new Mock<ILogger<RateLimitedIconService>>();
+
+        await SutLoggingTo(logger).GenerateIconAsync("test");
+
+        VerifyWarnings(logger, shouldWarn ? Times.Once() : Times.Never());
+    }
 }
