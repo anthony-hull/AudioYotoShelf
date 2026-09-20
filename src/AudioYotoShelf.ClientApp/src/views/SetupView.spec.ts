@@ -25,6 +25,13 @@ async function mountWithServerUrlLocked(isServerUrlLocked: boolean) {
   return wrapper
 }
 
+async function mountWithFailedOptions() {
+  vi.mocked(authApi.getAbsConnectOptions).mockRejectedValue(new Error('404'))
+  const wrapper = mount(SetupView)
+  await flushPromises()
+  return wrapper
+}
+
 describe('SetupView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -54,6 +61,23 @@ describe('SetupView', () => {
     await flushPromises()
 
     expect(authApi.connectAbs).toHaveBeenCalledWith({ apiKey: 'abs-key' })
+  })
+
+  it('never sends a guessed server URL when the options call fails', async () => {
+    // Defaulting to localhost here made a locked server reject the connect with a 400 the person
+    // could do nothing about. The field is theirs to fill in.
+    const wrapper = await mountWithFailedOptions()
+
+    expect(wrapper.find('[data-test="abs-url"]').exists()).toBe(true)
+    expect(wrapper.find<HTMLInputElement>('[data-test="abs-url"]').element.value).toBe('')
+
+    await wrapper.find('[data-test="abs-username"]').setValue('alice')
+    await wrapper.find('[data-test="abs-password"]').setValue('pw')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(authApi.connectAbs).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="abs-error"]').text()).toContain('server URL')
   })
 
   it('connects with username and password by default', async () => {

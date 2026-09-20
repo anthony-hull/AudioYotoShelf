@@ -7,6 +7,9 @@ namespace AudioYotoShelf.Api.Configuration;
 
 public class AbsConnectRequestValidator : AbstractValidator<AuthController.AbsConnectRequest>
 {
+    /// <summary>Matches the AudiobookshelfToken column the key is stored in.</summary>
+    private const int MaxApiKeyLength = 4096;
+
     public AbsConnectRequestValidator()
     {
         // Optional: the server may have its Audiobookshelf URL configured (AuthController resolves it).
@@ -16,7 +19,10 @@ public class AbsConnectRequestValidator : AbstractValidator<AuthController.AbsCo
             .When(x => !string.IsNullOrEmpty(x.BaseUrl))
             .WithMessage("Must be a valid HTTP/HTTPS URL");
 
-        When(x => string.IsNullOrEmpty(x.ApiKey), () =>
+        // Blank is not a credential — whitespace here would otherwise reach ABS as "Bearer   ".
+        RuleFor(x => x.ApiKey).MaximumLength(MaxApiKeyLength);
+
+        When(x => string.IsNullOrWhiteSpace(x.ApiKey), () =>
         {
             RuleFor(x => x.Username).NotEmpty().MaximumLength(256);
             RuleFor(x => x.Password).NotEmpty();

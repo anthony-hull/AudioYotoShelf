@@ -123,7 +123,7 @@ Set in `.env` (copied from [`.env.example`](.env.example)). Used by [`docker-com
 | `GEMINI_API_KEY` | no | — | Google AI Studio key for icon generation |
 | `DB_PASSWORD` | recommended | `changeme` | PostgreSQL password |
 | `BRIDGE_PORT` | no | `8080` | Host port the app listens on |
-| `AUDIOBOOKSHELF_URL` | recommended | — | The only ABS server users may connect to; hides the URL field on the setup screen |
+| `AUDIOBOOKSHELF_URL` | recommended | — | The only ABS server users may connect to; hides the URL field on the setup screen. Checked at startup, and any connection stored against another server is repointed to it |
 | `ADMIN_AUDIOBOOKSHELF_URL` | no | — | Trusted ABS server URL that can grant admin (see [Admin analytics](#admin-analytics)) |
 | `ADMIN_USERNAMES` | no | — | Comma-separated ABS usernames granted admin when they sign in via the trusted server |
 

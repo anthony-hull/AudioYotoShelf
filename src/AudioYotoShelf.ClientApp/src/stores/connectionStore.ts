@@ -5,6 +5,21 @@ import type { AbsConnectRequest, ConnectionStatus } from '@/types'
 
 const STORAGE_KEY = 'ays_user_connection_id'
 
+/**
+ * The reason the server gave, which is the part worth showing. An axios error's own message is
+ * only "Request failed with status code 400"; the body holds a plain string or ProblemDetails.
+ */
+function serverMessage(err: unknown): string | null {
+  const body = (err as { response?: { data?: unknown } })?.response?.data
+  if (typeof body === 'string' && body.trim()) return body
+  if (body && typeof body === 'object') {
+    const { detail, title } = body as { detail?: string; title?: string }
+    if (detail?.trim()) return detail
+    if (title?.trim()) return title
+  }
+  return err instanceof Error && err.message ? err.message : null
+}
+
 export const useConnectionStore = defineStore('connection', () => {
   const userConnectionId = ref<string | null>(localStorage.getItem(STORAGE_KEY))
   const status = ref<ConnectionStatus | null>(null)
@@ -50,8 +65,7 @@ export const useConnectionStore = defineStore('connection', () => {
       // Reload full status so all fields are populated
       await loadStatus()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to connect to Audiobookshelf'
-      error.value = msg
+      error.value = serverMessage(err) ?? 'Failed to connect to Audiobookshelf'
     } finally {
       isLoading.value = false
     }
