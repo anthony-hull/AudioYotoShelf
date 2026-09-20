@@ -1,10 +1,9 @@
-using System.Diagnostics;
 using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Logging;
 
 namespace AudioYotoShelf.Infrastructure.Services;
 
-public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IChapterExtractor
+public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IProcessRunner processRunner) : IChapterExtractor
 {
     public async Task<string> ExtractChapterAsync(
         string inputFilePath, double startSeconds, double endSeconds,
@@ -98,29 +97,13 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IC
     {
         logger.LogInformation("ffmpeg {Operation}: {Args}", operation, args);
 
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "ffmpeg",
-                Arguments = args,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
+        var result = await processRunner.RunAsync("ffmpeg", args, captureStandardError: true, ct);
 
-        process.Start();
-
-        var stderr = await process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-
-        if (process.ExitCode != 0)
+        if (result.ExitCode != 0)
         {
             logger.LogError("FFmpeg {Operation} failed with exit code {ExitCode}: {Stderr}",
-                operation, process.ExitCode, stderr);
-            throw new InvalidOperationException($"FFmpeg {operation} failed: {stderr}");
+                operation, result.ExitCode, result.StandardError);
+            throw new InvalidOperationException($"FFmpeg {operation} failed: {result.StandardError}");
         }
     }
 
@@ -128,22 +111,8 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger) : IC
     {
         try
         {
-            var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "ffmpeg",
-                    Arguments = "-version",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.Start();
-            await process.WaitForExitAsync(ct);
-            return process.ExitCode == 0;
+            var result = await processRunner.RunAsync("ffmpeg", "-version", captureStandardError: false, ct);
+            return result.ExitCode == 0;
         }
         catch
         {
