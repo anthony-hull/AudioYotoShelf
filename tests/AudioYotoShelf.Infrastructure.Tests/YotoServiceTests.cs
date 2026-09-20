@@ -297,7 +297,7 @@ public class YotoServiceTests
     [Fact]
     public async Task GetCardContentAsync_FieldsOfTheWrongShape_AreIgnoredRatherThanThrowing()
     {
-        _handler.Enqueue(HttpStatusCode.OK, """{"card":{"content":"nope","metadata":null,"title":42}}""");
+        _handler.Enqueue(HttpStatusCode.OK, """{"card":{"content":"nope","metadata":"oops","title":42}}""");
 
         var card = await CreateSut().GetCardContentAsync(Token, "c1");
 

@@ -169,6 +169,7 @@ public class YotoService(
         }
 
         var cardId = ExtractCardId(responseBody);
+        // Stryker disable once Equality : the condition only gates a warning log line
         if (cardId is null)
             logger.LogWarning("Yoto card create/update returned no recognizable cardId: {Body}",
                 responseBody.Length > 600 ? responseBody[..600] : responseBody);
@@ -269,6 +270,7 @@ public class YotoService(
             var json = await response.Content.ReadAsStringAsync(ct);
 
             // Raw body once per upload (Debug) for diagnosing response-shape changes.
+            // Stryker disable once Equality : the condition only gates a debug log line
             if (attempt == 0)
                 logger.LogDebug("Transcode response for {UploadId}: {Body}",
                     uploadId, json.Length > 600 ? json[..600] : json);
@@ -281,6 +283,7 @@ public class YotoService(
                 return result;
             }
 
+            // Stryker disable once Equality,Arithmetic : the condition only gates a progress log line
             if (attempt % 10 == 0)
                 logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: status={Status}",
                     attempt, MaxTranscodePollAttempts, uploadId, result.Status ?? "null");
