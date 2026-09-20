@@ -1,3 +1,5 @@
+using AudioYotoShelf.Core.DTOs.Audiobookshelf;
+using AudioYotoShelf.Core.DTOs.Transfer;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Core.Tests.Helpers;
@@ -142,13 +144,14 @@ public class AgeSuggestionServiceTests
     // =========================================================================
 
     [Fact]
-    public void SuggestAgeRange_NoSignals_ReturnsDefaultRange()
+    public void SuggestAgeRange_NoGenreOrKeywordSignals_FallsBackToTheDurationRange()
     {
         var metadata = TestData.CreateAbsMetadata(genres: [], description: "");
         var result = _sut.SuggestAgeRange(metadata, 7200, 10);
 
-        result.SuggestedMinAge.Should().BeInRange(0, 10);
-        result.SuggestedMaxAge.Should().BeInRange(5, 18);
+        // Duration is always a signal, so "no metadata" still yields the 2 h bucket (6-12), never a fixed default.
+        (result.SuggestedMinAge, result.SuggestedMaxAge).Should().Be((6, 12));
+        result.Source.Should().Be(AgeRangeSource.DurationInferred);
     }
 
     // =========================================================================
@@ -225,5 +228,106 @@ public class AgeSuggestionServiceTests
         var act = () => _sut.SuggestAgeRange(metadata, 3600, 10);
 
         act.Should().NotThrow();
+    }
+
+    // =========================================================================
+    // Mutation-testing additions — exact values, so a swapped bound or a dropped signal is caught
+    // =========================================================================
+
+    private static AbsBookMetadata Plain(string[]? genres = null, string description = "", bool isExplicit = false) =>
+        TestData.CreateAbsMetadata(genres: genres ?? [], description: description, isExplicit: isExplicit);
+
+    [Theory]
+    [InlineData(29, 2, 5)]
+    [InlineData(30, 4, 8)]      // exactly 30 minutes moves up a bucket
+    [InlineData(119, 4, 8)]
+    [InlineData(120, 6, 12)]    // exactly 2 hours moves up a bucket
+    [InlineData(479, 6, 12)]
+    [InlineData(480, 8, 18)]    // exactly 8 hours moves up a bucket
+    public void SuggestAgeRange_DurationOnly_PicksTheBucketForThatLength(int minutes, int expectedMin, int expectedMax)
+    {
+        var result = _sut.SuggestAgeRange(Plain(), minutes * 60.0, 1);
+
+        (result.SuggestedMinAge, result.SuggestedMaxAge).Should().Be((expectedMin, expectedMax));
+    }
+
+    [Fact]
+    public void SuggestAgeRange_DurationOnly_ReportsDurationAsTheReason()
+    {
+        var result = _sut.SuggestAgeRange(Plain(), 30 * 60.0, 1);
+
+        result.Source.Should().Be(AgeRangeSource.DurationInferred);
+        result.Reason.Should().Be("Based on duration: 30 minutes");
+        result.Signals.Should().Equal(new AgeSuggestionDetail("Duration", "30 minutes", 30));
+    }
+
+    [Fact]
+    public void SuggestAgeRange_PictureBookGenre_BlendsGenreAndDurationExactly()
+    {
+        // Picture book (2-5, weight 90) + 10 min (2-5, weight 40): every bound agrees, so 2-5.
+        var result = _sut.SuggestAgeRange(Plain(["Picture Book"]), 10 * 60.0, 1);
+
+        (result.SuggestedMinAge, result.SuggestedMaxAge).Should().Be((2, 5));
+        result.Source.Should().Be(AgeRangeSource.GenreInferred);
+        result.Reason.Should().Be("Based on genre: picture book");
+    }
+
+    [Fact]
+    public void SuggestAgeRange_GenreAndDurationDisagree_WeightsEachBoundSeparately()
+    {
+        // Thriller (12-18, weight 70) + 10 min (2-5, weight 40):
+        // min = (12*70 + 2*40) / 110 = 8.36 -> 8 ; max = (18*70 + 5*40) / 110 = 13.3 -> 13.
+        var result = _sut.SuggestAgeRange(Plain(["Thriller"]), 10 * 60.0, 1);
+
+        (result.SuggestedMinAge, result.SuggestedMaxAge).Should().Be((8, 13));
+    }
+
+    [Fact]
+    public void SuggestAgeRange_DescriptionKeyword_BlendsKeywordAndDurationExactly()
+    {
+        // Princess (4-8, weight 60) + 10 min (2-5, weight 40):
+        // min = (4*60 + 2*40) / 100 = 3.2 -> 3 ; max = (8*60 + 5*40) / 100 = 6.8 -> 7.
+        var result = _sut.SuggestAgeRange(Plain(description: "A princess in a castle"), 10 * 60.0, 1);
+
+        (result.SuggestedMinAge, result.SuggestedMaxAge).Should().Be((3, 7));
+        result.Source.Should().Be(AgeRangeSource.KeywordInferred);
+        result.Reason.Should().Be("Based on keyword: princess");
+    }
+
+    [Fact]
+    public void SuggestAgeRange_SeveralKeywordsInOneRule_ReportsTheFirstListed()
+    {
+        var result = _sut.SuggestAgeRange(Plain(description: "a wizard and a dragon"), 10 * 60.0, 1);
+
+        result.Reason.Should().Be("Based on keyword: dragon");
+    }
+
+    [Fact]
+    public void SuggestAgeRange_ExplicitFlag_BlendsExplicitAndDurationExactly()
+    {
+        // Explicit (14-18, weight 95) + 10 min (2-5, weight 40):
+        // min = (14*95 + 2*40) / 135 = 10.4 -> 10 ; max = (18*95 + 5*40) / 135 = 14.1 -> 14.
+        var result = _sut.SuggestAgeRange(Plain(isExplicit: true), 10 * 60.0, 1);
+
+        (result.SuggestedMinAge, result.SuggestedMaxAge).Should().Be((10, 14));
+        result.Signals.Should().Contain(new AgeSuggestionDetail("ExplicitContent", "true", 95));
+    }
+
+    [Fact]
+    public void SuggestAgeRange_GenresAndDescriptionThatMatchNothing_AddNoSignalsBeyondDuration()
+    {
+        var result = _sut.SuggestAgeRange(Plain(["Cookbook"], "Recipes for every day"), 10 * 60.0, 1);
+
+        result.Signals.Select(s => s.Signal).Should().Equal("Duration");
+    }
+
+    [Fact]
+    public void SuggestAgeRange_NullGenresAndDescription_FallBackToDurationOnly()
+    {
+        var metadata = TestData.CreateAbsMetadata() with { Genres = null, Description = null };
+
+        var result = _sut.SuggestAgeRange(metadata, 10 * 60.0, 1);
+
+        result.Signals.Select(s => s.Signal).Should().Equal("Duration");
     }
 }
