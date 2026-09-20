@@ -1,8 +1,10 @@
 using System.Text.Json;
 using AudioYotoShelf.Api.Middleware;
 using FluentAssertions;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -148,7 +150,7 @@ public class GlobalExceptionMiddlewareTests
         await middleware.InvokeAsync(context);
 
         var problem = await ReadProblemDetails(context);
-        problem!.Extensions.Should().ContainKey("traceId");
+        problem!.Extensions["traceId"]!.ToString().Should().Be("trace-abc-123");
     }
 
     [Fact]
@@ -221,5 +223,88 @@ public class GlobalExceptionMiddlewareTests
 
         nextCalled.Should().BeTrue();
         context.Response.StatusCode.Should().Be(200);
+    }
+
+    // =========================================================================
+    // Mutation-testing additions — the full RFC 7807 contract for each exception type
+    // =========================================================================
+
+    [Theory]
+    [MemberData(nameof(ExceptionContracts))]
+    public async Task EachExceptionType_MapsToItsStatusTitleAndDetail(
+        Exception thrown, int expectedStatus, string expectedTitle, string expectedDetail)
+    {
+        var middleware = CreateMiddleware(_ => throw thrown);
+        var context = CreateHttpContext();
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.StatusCode.Should().Be(expectedStatus);
+        var problem = await ReadProblemDetails(context);
+        problem!.Status.Should().Be(expectedStatus);
+        problem.Title.Should().Be(expectedTitle);
+        problem.Detail.Should().Be(expectedDetail);
+        problem.Type.Should().Be($"https://httpstatuses.com/{expectedStatus}");
+    }
+
+    public static TheoryData<Exception, int, string, string> ExceptionContracts => new()
+    {
+        { new InvalidOperationException("bad"), 400, "Invalid Operation", "bad" },
+        { new UnauthorizedAccessException("no"), 401, "Unauthorized", "no" },
+        { new KeyNotFoundException("gone"), 404, "Not Found", "gone" },
+        { new TimeoutException("slow"), 504, "Timeout", "slow" },
+        { new OperationCanceledException("ignored"), 400, "Cancelled", "The operation was cancelled" },
+        { new HttpRequestException("upstream"), 502, "External Service Error", "upstream" },
+        { new NullReferenceException("secret internals"), 500, "Internal Server Error", "An unexpected error occurred" },
+    };
+
+    [Fact]
+    public async Task ValidationException_Returns422_ListingEveryFailedProperty()
+    {
+        var failures = new[]
+        {
+            new FluentValidation.Results.ValidationFailure("Name", "Name is required"),
+            new FluentValidation.Results.ValidationFailure("Age", "Age must be positive"),
+        };
+        var middleware = CreateMiddleware(_ => throw new FluentValidation.ValidationException(failures));
+        var context = CreateHttpContext();
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.StatusCode.Should().Be(422);
+        var problem = await ReadProblemDetails(context);
+        problem!.Title.Should().Be("Validation Error");
+        problem.Detail.Should().Be("Name: Name is required; Age: Age must be positive");
+    }
+
+    [Fact]
+    public async Task Response_IsCompactCamelCaseJson_CarryingTheTraceId()
+    {
+        var middleware = CreateMiddleware(_ => throw new InvalidOperationException("bad"));
+        var context = CreateHttpContext();
+        context.TraceIdentifier = "trace-abc-123";
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.Body.Seek(0, SeekOrigin.Begin);
+        var raw = await new StreamReader(context.Response.Body).ReadToEndAsync();
+        raw.Should().NotContain("\n").And.NotContain("  ");
+        using var json = JsonDocument.Parse(raw);
+        json.RootElement.GetProperty("traceId").GetString().Should().Be("trace-abc-123");
+        json.RootElement.TryGetProperty("title", out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UseGlobalExceptionHandling_CatchesExceptionsFromTheRestOfThePipeline()
+    {
+        var services = new ServiceCollection().AddLogging().BuildServiceProvider();
+        var app = new ApplicationBuilder(services);
+        app.UseGlobalExceptionHandling();
+        app.Run(_ => throw new KeyNotFoundException("missing"));
+        var context = CreateHttpContext();
+
+        await app.Build()(context);
+
+        context.Response.StatusCode.Should().Be(404);
     }
 }
