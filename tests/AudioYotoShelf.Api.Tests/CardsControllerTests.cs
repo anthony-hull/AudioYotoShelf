@@ -253,7 +253,7 @@ public class CardsControllerTests : IDisposable
         _yotoService.Setup(s => s.GetUserCardsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("refused", null, refused));
         _yotoService.Setup(s => s.GetCardContentAsync(It.IsAny<string>(), "card-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CardWithChapters("card-1", 4));
+            .ReturnsAsync(CardWithChapters("card-1", 2, 3));
         _yotoService.Setup(s => s.GetCardContentAsync(It.IsAny<string>(), "card-gone", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("not found", null, HttpStatusCode.NotFound));
 
@@ -262,7 +262,7 @@ public class CardsControllerTests : IDisposable
         var only = cards.Should().ContainSingle().Subject;
         (only.GetProperty("CardId").GetString(), only.GetProperty("ChapterCount").GetInt32(), only.GetProperty("TrackCount").GetInt32(),
             only.GetProperty("FromAudioYotoShelf").GetBoolean(), only.GetProperty("SourceBookAuthor").GetString())
-            .Should().Be(("card-1", 1, 4, true, "Author One"));
+            .Should().Be(("card-1", 2, 5, true, "Author One"));
         _yotoService.Verify(s => s.GetCardContentAsync(It.IsAny<string>(), "card-bob", It.IsAny<CancellationToken>()), Times.Never);
     }
 
