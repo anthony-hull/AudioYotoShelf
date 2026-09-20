@@ -17,7 +17,7 @@ using Moq;
 
 namespace AudioYotoShelf.Infrastructure.Tests;
 
-public class TransferOrchestratorTests : IDisposable
+public partial class TransferOrchestratorTests : IDisposable
 {
     private readonly InMemoryDbFixture _dbFixture;
     private readonly AudioYotoShelfDbContext _db;
@@ -26,6 +26,8 @@ public class TransferOrchestratorTests : IDisposable
     private readonly Mock<IIconGenerationService> _iconService;
     private readonly Mock<IAgeSuggestionService> _ageService;
     private readonly Mock<IChapterExtractor> _chapterExtractor;
+    private readonly Mock<ITransferProgressNotifier> _notifier;
+    private readonly TransferMetrics _metrics;
     private readonly IConfiguration _configuration;
     private readonly TransferOrchestrator _sut;
     private readonly string _tempChapterFile;
@@ -39,6 +41,8 @@ public class TransferOrchestratorTests : IDisposable
         _iconService = new Mock<IIconGenerationService>();
         _ageService = new Mock<IAgeSuggestionService>();
         _chapterExtractor = new Mock<IChapterExtractor>();
+        _notifier = new Mock<ITransferProgressNotifier>();
+        _metrics = new TransferMetrics();
 
         var configDict = new Dictionary<string, string?>
         {
@@ -48,12 +52,7 @@ public class TransferOrchestratorTests : IDisposable
             .AddInMemoryCollection(configDict)
             .Build();
 
-        _sut = new TransferOrchestrator(
-            _db, _absService.Object, _yotoService.Object,
-            _iconService.Object, _ageService.Object,
-            _chapterExtractor.Object, Mock.Of<ITransferProgressNotifier>(), _configuration,
-            new TransferMetrics(),
-            Mock.Of<ILogger<TransferOrchestrator>>());
+        _sut = CreateSut(_configuration);
 
         _tempChapterFile = Path.Combine(Path.GetTempPath(), $"test_chapter_{Guid.NewGuid():N}.m4a");
         File.WriteAllBytes(_tempChapterFile, new byte[100]);
@@ -61,10 +60,18 @@ public class TransferOrchestratorTests : IDisposable
         SetupDefaultMocks();
     }
 
+    private TransferOrchestrator CreateSut(IConfiguration configuration) => new(
+        _db, _absService.Object, _yotoService.Object,
+        _iconService.Object, _ageService.Object,
+        _chapterExtractor.Object, _notifier.Object, configuration,
+        _metrics,
+        Mock.Of<ILogger<TransferOrchestrator>>());
+
     public void Dispose()
     {
         if (File.Exists(_tempChapterFile)) File.Delete(_tempChapterFile);
         _dbFixture.Dispose();
+        _metrics.Dispose();
     }
 
     private void SetupDefaultMocks()
