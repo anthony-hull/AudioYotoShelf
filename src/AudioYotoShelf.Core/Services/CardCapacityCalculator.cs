@@ -9,22 +9,18 @@ public class CardCapacityCalculator(YotoCardLimits limits) : ICardCapacityCalcul
     public int ProjectedTrackCount(SourceTrack track)
     {
         var byDuration = (int)Math.Ceiling(track.DurationSeconds / limits.MaxTrackDurationSeconds);
-        var byBytes = track.EstimatedBytes > 0
-            ? (int)Math.Ceiling((double)track.EstimatedBytes / limits.MaxTrackBytes)
-            : 1;
+        var byBytes = (int)Math.Ceiling((double)track.EstimatedBytes / limits.MaxTrackBytes);
         return Math.Max(1, Math.Max(byDuration, byBytes));
     }
 
     public CapacityResult Calculate(IEnumerable<BookTrackPlan> books)
     {
-        var ordered = books as IReadOnlyList<BookTrackPlan> ?? books.ToList();
-
         var tracks = 0;
         var duration = 0.0;
         var bytes = 0L;
         string? firstOverflow = null;
 
-        foreach (var book in ordered)
+        foreach (var book in books)
         {
             foreach (var track in book.Tracks)
             {
