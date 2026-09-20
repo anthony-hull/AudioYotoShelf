@@ -136,4 +136,92 @@ public class RedisCacheServiceTests
         var key = CacheKeys.GeminiDailyCount(new DateOnly(2026, 3, 1));
         key.Should().Be("gemini:count:2026-03-01");
     }
+
+    // =========================================================================
+    // Mutation-testing additions
+    // =========================================================================
+
+    [Fact]
+    public async Task SetAsync_StoresCompactCamelCaseJson()
+    {
+        await _sut.SetAsync("json-key", new TestItem("hello", 42));
+
+        (await _cache.GetStringAsync("json-key")).Should().Be("""{"name":"hello","value":42}""");
+    }
+
+    [Fact]
+    public async Task SetAsync_ExplicitTtl_IsUsedAsTheAbsoluteExpiry()
+    {
+        var cache = new Mock<IDistributedCache>();
+        var sut = new RedisCacheService(cache.Object, Mock.Of<ILogger<RedisCacheService>>());
+
+        await sut.SetAsync("k", new TestItem("x", 1), TimeSpan.FromMinutes(3));
+
+        cache.Verify(c => c.SetAsync("k", It.IsAny<byte[]>(),
+            It.Is<DistributedCacheEntryOptions>(o => o.AbsoluteExpirationRelativeToNow == TimeSpan.FromMinutes(3)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SetAsync_NoTtl_ExpiresAfterTenMinutes()
+    {
+        var cache = new Mock<IDistributedCache>();
+        var sut = new RedisCacheService(cache.Object, Mock.Of<ILogger<RedisCacheService>>());
+
+        await sut.SetAsync("k", new TestItem("x", 1));
+
+        cache.Verify(c => c.SetAsync("k", It.IsAny<byte[]>(),
+            It.Is<DistributedCacheEntryOptions>(o => o.AbsoluteExpirationRelativeToNow == TimeSpan.FromMinutes(10)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // A cache outage must degrade to "not cached", never take the request down with it.
+
+    private static RedisCacheService ServiceOverABrokenCache()
+    {
+        var cache = new Mock<IDistributedCache>();
+        cache.Setup(c => c.GetAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("redis down"));
+        cache.Setup(c => c.SetAsync(It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<DistributedCacheEntryOptions>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("redis down"));
+        cache.Setup(c => c.RemoveAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("redis down"));
+        return new RedisCacheService(cache.Object, Mock.Of<ILogger<RedisCacheService>>());
+    }
+
+    [Fact]
+    public async Task GetAsync_CacheFails_ReturnsNull()
+    {
+        (await ServiceOverABrokenCache().GetAsync<TestItem>("k")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetAsync_CacheFails_DoesNotThrow()
+    {
+        var act = () => ServiceOverABrokenCache().SetAsync("k", new TestItem("x", 1));
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task RemoveAsync_CacheFails_DoesNotThrow()
+    {
+        var act = () => ServiceOverABrokenCache().RemoveAsync("k");
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task GetOrSetAsync_CacheFails_StillReturnsTheFactoryValue()
+    {
+        var result = await ServiceOverABrokenCache().GetOrSetAsync("k", _ => Task.FromResult(new TestItem("fresh", 7)));
+
+        result.Should().Be(new TestItem("fresh", 7));
+    }
+
+    [Fact]
+    public void CacheKeys_AbsItem_IncludesTheItemId() =>
+        CacheKeys.AbsItem("item-9").Should().Be("abs:item:item-9");
+
+    [Fact]
+    public void CacheKeys_AbsSeries_IncludesLibraryAndPage() =>
+        CacheKeys.AbsSeries("lib-1", 2).Should().Be("abs:series:lib-1:2");
 }
