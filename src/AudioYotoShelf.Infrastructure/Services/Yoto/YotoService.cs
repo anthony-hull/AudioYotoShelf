@@ -169,6 +169,7 @@ public class YotoService(
         }
 
         var cardId = ExtractCardId(responseBody);
+        // Stryker disable once Equality : the condition only gates a warning log line
         if (cardId is null)
             logger.LogWarning("Yoto card create/update returned no recognizable cardId: {Body}",
                 responseBody.Length > 600 ? responseBody[..600] : responseBody);
@@ -233,6 +234,10 @@ public class YotoService(
     protected virtual Task DelayBetweenUploadAttemptsAsync(int attempt, CancellationToken ct) =>
         Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
 
+    // Seam for tests: 5s between transcode polls in production; overridden to no-op in unit tests.
+    protected virtual Task DelayBetweenTranscodePollsAsync(CancellationToken ct) =>
+        Task.Delay(TranscodePollDelayMs, ct);
+
     /// <summary>
     /// A reset/closed connection during the request-body write throws HttpRequestException
     /// wrapping IOException → SocketException (broken pipe / connection reset). These are safe
@@ -265,6 +270,7 @@ public class YotoService(
             var json = await response.Content.ReadAsStringAsync(ct);
 
             // Raw body once per upload (Debug) for diagnosing response-shape changes.
+            // Stryker disable once Equality : the condition only gates a debug log line
             if (attempt == 0)
                 logger.LogDebug("Transcode response for {UploadId}: {Body}",
                     uploadId, json.Length > 600 ? json[..600] : json);
@@ -277,11 +283,12 @@ public class YotoService(
                 return result;
             }
 
+            // Stryker disable once Equality,Arithmetic : the condition only gates a progress log line
             if (attempt % 10 == 0)
                 logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: status={Status}",
                     attempt, MaxTranscodePollAttempts, uploadId, result.Status ?? "null");
 
-            await Task.Delay(TranscodePollDelayMs, ct);
+            await DelayBetweenTranscodePollsAsync(ct);
         }
 
         var elapsedMinutes = MaxTranscodePollAttempts * TranscodePollDelayMs / 60_000.0;
