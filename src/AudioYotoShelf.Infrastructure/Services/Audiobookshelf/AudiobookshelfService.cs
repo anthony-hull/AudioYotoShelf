@@ -1,5 +1,9 @@
+using System.Buffers.Text;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Logging;
@@ -12,6 +16,12 @@ public class AudiobookshelfService(
 {
     // ABS only routes POST here; a GET falls through to a 404.
     private const string AuthorizePath = "/api/authorize";
+
+    // Its own client because it must not follow redirects, and the shared one should keep doing so.
+    private const string SsoClientName = "AudiobookshelfSso";
+    private const int PkceVerifierBytes = 32;
+    private const int StateBytes = 32;
+    private const int MaxErrorBodyLength = 300;
 
     private HttpClient CreateClient(string baseUrl, string token)
     {
@@ -39,6 +49,103 @@ public class AudiobookshelfService(
 
         return await response.Content.ReadFromJsonAsync<AbsLoginResponse>(ct)
             ?? throw new InvalidOperationException("Failed to deserialize ABS login response");
+    }
+
+    public async Task<AbsSsoStart> StartSsoAsync(
+        string baseUrl, string? publicBaseUrl, string redirectUri, CancellationToken ct = default)
+    {
+        var codeVerifier = RandomUrlSafeToken(PkceVerifierBytes);
+        var state = RandomUrlSafeToken(StateBytes);
+        var query = $"response_type=code&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
+                    $"&state={state}&code_challenge={S256Challenge(codeVerifier)}&code_challenge_method=S256";
+
+        using var client = CreateSsoClient(baseUrl);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/auth/openid?{query}");
+        if (publicBaseUrl is not null)
+            PretendToBeCalledOn(request, new Uri(publicBaseUrl));
+
+        using var response = await client.SendAsync(request, ct);
+        var location = response.Headers.Location;
+        if (!IsRedirect(response.StatusCode) || location is not { IsAbsoluteUri: true })
+            throw await SsoFailureAsync("start", response, ct);
+
+        return new AbsSsoStart(location.OriginalString, ReadSetCookies(response), state, codeVerifier);
+    }
+
+    public async Task<AbsLoginResponse> CompleteSsoAsync(
+        string baseUrl, string code, string state, string codeVerifier,
+        IReadOnlyDictionary<string, string> cookies, CancellationToken ct = default)
+    {
+        using var client = CreateSsoClient(baseUrl);
+        var query = $"code={Uri.EscapeDataString(code)}&state={Uri.EscapeDataString(state)}" +
+                    $"&code_verifier={Uri.EscapeDataString(codeVerifier)}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/auth/openid/callback?{query}");
+        request.Headers.TryAddWithoutValidation(
+            "Cookie", string.Join("; ", cookies.Select(cookie => $"{cookie.Key}={cookie.Value}")));
+
+        using var response = await client.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+            throw await SsoFailureAsync("code exchange", response, ct);
+
+        return await response.Content.ReadFromJsonAsync<AbsLoginResponse>(ct)
+            ?? throw new InvalidOperationException("Failed to deserialize ABS single sign-on response");
+    }
+
+    private HttpClient CreateSsoClient(string baseUrl)
+    {
+        var client = httpClientFactory.CreateClient(SsoClientName);
+        client.BaseAddress = new Uri(baseUrl.TrimEnd('/'));
+        return client;
+    }
+
+    /// <summary>
+    /// Audiobookshelf builds the address the identity provider sends the browser back to from the
+    /// request's Host and protocol, so present the public ones rather than an internal container name.
+    /// </summary>
+    private static void PretendToBeCalledOn(HttpRequestMessage request, Uri publicBaseUrl)
+    {
+        request.Headers.Host = publicBaseUrl.Authority;
+        request.Headers.Add("X-Forwarded-Proto", publicBaseUrl.Scheme);
+    }
+
+    private static string RandomUrlSafeToken(int byteCount) =>
+        Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(byteCount));
+
+    private static string S256Challenge(string codeVerifier) =>
+        Base64Url.EncodeToString(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier)));
+
+    private static bool IsRedirect(HttpStatusCode status) =>
+        status is HttpStatusCode.Redirect or HttpStatusCode.RedirectKeepVerb or HttpStatusCode.RedirectMethod
+            or HttpStatusCode.MovedPermanently or HttpStatusCode.PermanentRedirect;
+
+    /// <summary>The cookies a response sets, as name → value; attributes such as Path and HttpOnly are dropped.</summary>
+    private static Dictionary<string, string> ReadSetCookies(HttpResponseMessage response)
+    {
+        var cookies = new Dictionary<string, string>();
+        if (!response.Headers.TryGetValues("Set-Cookie", out var setCookies))
+            return cookies;
+
+        foreach (var setCookie in setCookies)
+        {
+            var nameValue = setCookie.Split(';', 2)[0];
+            var separator = nameValue.IndexOf('=');
+            if (separator > 0)
+                cookies[nameValue[..separator].Trim()] = nameValue[(separator + 1)..].Trim();
+        }
+
+        return cookies;
+    }
+
+    private static async Task<HttpRequestException> SsoFailureAsync(
+        string step, HttpResponseMessage response, CancellationToken ct)
+    {
+        var body = await response.Content.ReadAsStringAsync(ct);
+        if (body.Length > MaxErrorBodyLength)
+            body = body[..MaxErrorBodyLength];
+
+        return new HttpRequestException(
+            $"Audiobookshelf single sign-on {step} failed: {(int)response.StatusCode} {body}".TrimEnd(),
+            inner: null, response.StatusCode);
     }
 
     public async Task<AbsLoginResponse> RefreshTokenAsync(string baseUrl, string refreshToken, CancellationToken ct = default)

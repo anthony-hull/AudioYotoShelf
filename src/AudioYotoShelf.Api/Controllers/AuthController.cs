@@ -1,5 +1,8 @@
+using System.Buffers.Text;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using AudioYotoShelf.Core.Configuration;
+using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
@@ -18,9 +21,17 @@ public class AuthController(
     IAudiobookshelfService absService,
     IYotoService yotoService,
     AudioYotoShelfDbContext db,
+    ISsoFlowStore ssoFlows,
     IConfiguration configuration,
     ILogger<AuthController> logger) : AppControllerBase
 {
+    private const string SsoCallbackPath = "/api/auth/abs/sso/callback";
+    private const string SsoBrowserCookieName = "ays_sso";
+    private const string SsoBrowserCookiePath = "/api/auth/abs/sso";
+    private const int SsoBrowserNonceBytes = 32;
+    private const string SetupPath = "/setup";
+    private static readonly TimeSpan SsoFlowLifetime = TimeSpan.FromMinutes(5);
+
     // --- Audiobookshelf Auth ---
 
     /// <summary>
@@ -55,29 +66,122 @@ public class AuthController(
             : await absService.LoginAsync(baseUrl, request.Username!, request.Password!, ct);
         var absUser = loginResponse.User;
 
-        var userConnection = await db.UserConnections
-            .FirstOrDefaultAsync(u => u.Username == absUser.Username, ct);
-
-        if (userConnection is null)
+        var userConnection = await SignInAbsUserAsync(baseUrl, loginResponse, user =>
         {
-            userConnection = new UserConnection
-            {
-                Username = absUser.Username,
-                AudiobookshelfUrl = baseUrl,
-                DefaultLibraryId = loginResponse.UserDefaultLibraryId
-            };
-            db.UserConnections.Add(userConnection);
-        }
-        else
+            if (usesApiKey)
+                AbsTokens.ApplyApiKey(user, request.ApiKey!);
+            else
+                AbsTokens.ApplyLogin(user, absUser);
+        }, ct);
+
+        logger.LogInformation("User {Username} connected to ABS at {BaseUrl} using {Method}",
+            absUser.Username, baseUrl, usesApiKey ? "API key" : "password");
+
+        return Ok(new
         {
-            userConnection.AudiobookshelfUrl = baseUrl;
-            userConnection.DefaultLibraryId = loginResponse.UserDefaultLibraryId ?? userConnection.DefaultLibraryId;
+            UserConnectionId = userConnection.Id,
+            Username = absUser.Username,
+            AbsConnected = true,
+            YotoConnected = userConnection.HasValidYotoConnection,
+            DefaultLibraryId = userConnection.DefaultLibraryId,
+            Libraries = absUser.LibrariesAccessible
+        });
+    }
+
+    /// <summary>
+    /// Starts connecting as the person themselves through Audiobookshelf's OpenID flow: sends the
+    /// browser to sign in, silently when their identity provider session already exists. Only
+    /// meaningful when the Audiobookshelf server is configured — that is what pins where the tokens
+    /// come from.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("abs/sso/start")]
+    public async Task<IActionResult> StartAbsSso(CancellationToken ct)
+    {
+        if (ConfiguredAbsUrl is not { } baseUrl)
+            return BadRequest("Single sign-on needs the Audiobookshelf server URL to be configured (Audiobookshelf:Url)");
+
+        AbsSsoStart start;
+        try
+        {
+            start = await absService.StartSsoAsync(baseUrl, ConfiguredAbsPublicUrl, SsoCallbackUrl, ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogError(ex, "Audiobookshelf refused to start single sign-on");
+            return Redirect($"{SetupPath}?sso=unavailable");
         }
 
-        if (usesApiKey)
-            AbsTokens.ApplyApiKey(userConnection, request.ApiKey!);
-        else
-            AbsTokens.ApplyLogin(userConnection, absUser);
+        // Bind the attempt to this browser, so a link that finishes someone else's attempt cannot
+        // sign the person who follows it in as somebody else.
+        var browserNonce = Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(SsoBrowserNonceBytes));
+        await ssoFlows.SaveAsync(
+            start.State, new PendingSsoFlow(start.CodeVerifier, start.Cookies, browserNonce), SsoFlowLifetime, ct);
+        Response.Cookies.Append(SsoBrowserCookieName, browserNonce, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = Request.IsHttps,
+            // Lax rather than Strict: the browser comes back from the identity provider on a
+            // cross-site navigation, which Strict would leave the cookie off.
+            SameSite = SameSiteMode.Lax,
+            MaxAge = SsoFlowLifetime,
+            Path = SsoBrowserCookiePath,
+        });
+
+        return Redirect(start.AuthorizationUrl);
+    }
+
+    /// <summary>
+    /// Where the browser lands after signing in: trades the code for the person's own Audiobookshelf
+    /// tokens, stores them, and signs them in. A state that is unknown, expired, already used, or
+    /// from another browser sends them back to start again, since a refresh or double-click looks
+    /// exactly like that and is not an error.
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("abs/sso/callback")]
+    public async Task<IActionResult> AbsSsoCallback(
+        [FromQuery] string? code, [FromQuery] string? state, CancellationToken ct)
+    {
+        if (ConfiguredAbsUrl is not { } baseUrl)
+            return BadRequest("Single sign-on needs the Audiobookshelf server URL to be configured (Audiobookshelf:Url)");
+        if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
+            return BadRequest("Missing code or state");
+
+        Request.Cookies.TryGetValue(SsoBrowserCookieName, out var browserNonce);
+        var flow = await ssoFlows.TakeAsync(state, browserNonce, ct);
+        Response.Cookies.Delete(SsoBrowserCookieName, new CookieOptions { Path = SsoBrowserCookiePath });
+        if (flow is null)
+            return Redirect($"{SetupPath}?sso=expired");
+
+        AbsLoginResponse loginResponse;
+        try
+        {
+            loginResponse = await absService.CompleteSsoAsync(baseUrl, code, state, flow.CodeVerifier, flow.AbsCookies, ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogError(ex, "Audiobookshelf refused the single sign-on code exchange");
+            return Redirect($"{SetupPath}?sso=unavailable");
+        }
+
+        await SignInAbsUserAsync(baseUrl, loginResponse, user => AbsTokens.ApplyLogin(user, loginResponse.User), ct);
+
+        logger.LogInformation("User {Username} connected to ABS at {BaseUrl} using single sign-on",
+            loginResponse.User.Username, baseUrl);
+
+        return Redirect(SetupPath);
+    }
+
+    /// <summary>
+    /// The part of connecting every method shares: find or create the person's connection, store
+    /// their credentials, work out admin rights, record the login and issue the session.
+    /// </summary>
+    private async Task<UserConnection> SignInAbsUserAsync(
+        string baseUrl, AbsLoginResponse loginResponse, Action<UserConnection> applyCredentials, CancellationToken ct)
+    {
+        var absUser = loginResponse.User;
+        var userConnection = await UpsertConnectionAsync(baseUrl, loginResponse, ct);
+        applyCredentials(userConnection);
 
         // Admin rights are only granted to allow-listed usernames that authenticate against the
         // TRUSTED admin Audiobookshelf server (Admin:AudiobookshelfUrl). Unless Audiobookshelf:Url is
@@ -101,19 +205,32 @@ public class AuthController(
         // trusted admin server, so an admin row reached via a forged BaseUrl never yields an
         // admin session.
         await IssueSessionAsync(userConnection, isAdminSession: userConnection.IsAdmin && fromAdminServer);
+        return userConnection;
+    }
 
-        logger.LogInformation("User {Username} connected to ABS at {BaseUrl} using {Method}",
-            absUser.Username, baseUrl, usesApiKey ? "API key" : "password");
+    private async Task<UserConnection> UpsertConnectionAsync(
+        string baseUrl, AbsLoginResponse loginResponse, CancellationToken ct)
+    {
+        var username = loginResponse.User.Username;
+        var userConnection = await db.UserConnections.FirstOrDefaultAsync(u => u.Username == username, ct);
 
-        return Ok(new
+        if (userConnection is null)
         {
-            UserConnectionId = userConnection.Id,
-            Username = absUser.Username,
-            AbsConnected = true,
-            YotoConnected = userConnection.HasValidYotoConnection,
-            DefaultLibraryId = userConnection.DefaultLibraryId,
-            Libraries = absUser.LibrariesAccessible
-        });
+            userConnection = new UserConnection
+            {
+                Username = username,
+                AudiobookshelfUrl = baseUrl,
+                DefaultLibraryId = loginResponse.UserDefaultLibraryId
+            };
+            db.UserConnections.Add(userConnection);
+        }
+        else
+        {
+            userConnection.AudiobookshelfUrl = baseUrl;
+            userConnection.DefaultLibraryId = loginResponse.UserDefaultLibraryId ?? userConnection.DefaultLibraryId;
+        }
+
+        return userConnection;
     }
 
     [AllowAnonymous]
@@ -126,6 +243,12 @@ public class AuthController(
 
     private string? ConfiguredAbsUrl =>
         AudiobookshelfServer.ResolveConfiguredUrl(configuration[AudiobookshelfServer.UrlConfigKey]);
+
+    private string? ConfiguredAbsPublicUrl => AudiobookshelfServer.ResolveConfiguredUrl(
+        configuration[AudiobookshelfServer.PublicUrlConfigKey], AudiobookshelfServer.PublicUrlConfigKey);
+
+    // Must match the entry in Audiobookshelf's Allowed Mobile Redirect URIs character for character.
+    private string SsoCallbackUrl => $"{Request.Scheme}://{Request.Host}{SsoCallbackPath}";
 
     /// <summary>
     /// The Audiobookshelf server a connect request may use: the configured server when set (a
@@ -237,7 +360,7 @@ public class AuthController(
 
         logger.LogInformation("User {Username} connected to Yoto via auth code flow", user.Username);
 
-        return Redirect("/setup");
+        return Redirect(SetupPath);
     }
 
     // --- User Settings (Phase 3) ---
