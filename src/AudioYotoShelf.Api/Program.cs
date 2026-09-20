@@ -46,6 +46,8 @@ builder.Host.UseSerilog((context, loggerConfig) =>
 // malformed URL stops the boot rather than failing every connect with a generic 500.
 var configuredAbsUrl = AudiobookshelfServer.ResolveConfiguredUrl(
     builder.Configuration[AudiobookshelfServer.UrlConfigKey]);
+_ = AudiobookshelfServer.ResolveConfiguredUrl(
+    builder.Configuration[AudiobookshelfServer.PublicUrlConfigKey], AudiobookshelfServer.PublicUrlConfigKey);
 
 // --- Database ---
 builder.Services.AddDbContext<AudioYotoShelfDbContext>(options =>
@@ -81,6 +83,14 @@ builder.Services.AddHttpClient("Audiobookshelf", client =>
     client.DefaultRequestHeaders.Add("Accept", "application/json");
     client.Timeout = TimeSpan.FromMinutes(10);
 });
+// Single sign-on has to read Audiobookshelf's redirect (it is the authorization URL), not follow it,
+// and must never let a cookie jar be shared between people.
+builder.Services.AddHttpClient("AudiobookshelfSso", client => client.Timeout = TimeSpan.FromSeconds(30))
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        UseCookies = false,
+    });
 builder.Services.AddHttpClient("Yoto", client =>
 {
     client.DefaultRequestHeaders.Add("Accept", "application/json");
@@ -126,6 +136,7 @@ builder.Services.AddScoped<ITransferOrchestrator, TransferOrchestrator>();
 builder.Services.AddScoped<IPlaylistService, PlaylistService>();
 builder.Services.AddScoped<IPlaylistTransferOrchestrator, PlaylistTransferOrchestrator>();
 builder.Services.AddSingleton<ICacheService, RedisCacheService>();
+builder.Services.AddSingleton<ISsoFlowStore, DistributedCacheSsoFlowStore>();
 builder.Services.AddTransferJobs();
 builder.Services.AddScoped<ITransferProgressNotifier, AudioYotoShelf.Api.Hubs.SignalRTransferProgressNotifier>();
 
