@@ -432,9 +432,7 @@ public class TransferOrchestrator(
                     {
                         var overallProgress = 20 + (int)((i + p / 100.0) / mappings.Count * 50);
                         transfer.ProgressPercent = Math.Min(overallProgress, 70);
-                        var step = p >= 60
-                            ? $"Transcoding track {i + 1}/{mappings.Count} on Yoto…"
-                            : $"Uploading track {i + 1}/{mappings.Count}…";
+                        var step = DescribeUploadStep(p, i + 1, mappings.Count);
                         // Best-effort live update; no DB write from the progress callback.
                         _ = NotifyAsync(transfer, step, CancellationToken.None);
                     }),
@@ -449,6 +447,18 @@ public class TransferOrchestrator(
                 await audioStream.DisposeAsync();
             }
         }
+    }
+
+    /// <summary>What to tell the person about a track: the upload is quick, so most of the time it is Yoto's transcode.</summary>
+    internal static string DescribeUploadStep(int trackProgress, int trackNumber, int trackCount)
+    {
+        if (trackProgress < YotoUploadProgress.TranscodeStart)
+            return $"Uploading track {trackNumber}/{trackCount}…";
+
+        var transcoding = $"Transcoding track {trackNumber}/{trackCount} on Yoto…";
+        return trackProgress == YotoUploadProgress.TranscodeStart
+            ? transcoding
+            : $"{transcoding} {YotoUploadProgress.ToTranscodePercent(trackProgress)}%";
     }
 
     internal async Task<Dictionary<int, string>> GenerateIconsAsync(

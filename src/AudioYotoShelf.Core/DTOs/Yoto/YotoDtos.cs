@@ -96,10 +96,14 @@ public record YotoUploadInfo(
     string UploadId
 );
 
+/// <param name="Phase">Yoto's own stage, for example "transcoding" (from <c>transcode.progress.phase</c>).</param>
+/// <param name="Percent">How far Yoto's transcode has got, 0-100 (from <c>transcode.progress.percent</c>); null before it reports one.</param>
 public record YotoTranscodeResponse(
     string? TranscodedSha256,
     YotoTranscodedInfo? TranscodedInfo,
-    string? Status
+    string? Status,
+    string? Phase = null,
+    int? Percent = null
 );
 
 public record YotoTranscodedInfo(
