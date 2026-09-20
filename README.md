@@ -124,6 +124,7 @@ Set in `.env` (copied from [`.env.example`](.env.example)). Used by [`docker-com
 | `DB_PASSWORD` | recommended | `changeme` | PostgreSQL password |
 | `BRIDGE_PORT` | no | `8080` | Host port the app listens on |
 | `AUDIOBOOKSHELF_URL` | recommended | — | The only ABS server users may connect to; hides the URL field on the setup screen. Checked at startup, and any connection stored against another server is repointed to it |
+| `AUDIOBOOKSHELF_PUBLIC_URL` | for SSO, if `AUDIOBOOKSHELF_URL` is an internal name | — | The address browsers reach ABS at (for example `https://abs.example.com`). Audiobookshelf builds the identity provider's return address from the host it was called on, so an internal container name would send the browser somewhere it cannot go. Not needed when `AUDIOBOOKSHELF_URL` is already the public address |
 | `ADMIN_AUDIOBOOKSHELF_URL` | no | — | Trusted ABS server URL that can grant admin (see [Admin analytics](#admin-analytics)) |
 | `ADMIN_USERNAMES` | no | — | Comma-separated ABS usernames granted admin when they sign in via the trusted server |
 
@@ -146,7 +147,12 @@ open http://localhost:8080
 
 ### First Run
 
-1. Open `http://localhost:8080` and sign in to Audiobookshelf with either:
+1. Open `http://localhost:8080` and connect to Audiobookshelf. With `AUDIOBOOKSHELF_URL` set, the
+   primary button is **Connect with single sign-on**: if you are already signed in to your identity
+   provider it connects you with nothing to type, and you get exactly the library access and
+   download permission you have in Audiobookshelf itself. See
+   [Single sign-on](#single-sign-on-with-audiobookshelf) for the one setting it needs. Under
+   **Use a different method** you can still use either of:
    - your username and password, or
    - an **API key** — needed if you sign in to ABS with single sign-on (OpenID Connect), since
      those accounts have no password. An ABS admin creates one under **Settings → API Keys**,
@@ -156,6 +162,32 @@ open http://localhost:8080
    Enter the server URL too, unless `AUDIOBOOKSHELF_URL` is set.
 2. Authorize with Yoto — you're redirected to Yoto's login (OAuth authorization code flow) and back to the app
 3. Browse your library and transfer books to MYO cards
+
+## Single sign-on with Audiobookshelf
+
+For an Audiobookshelf that signs people in through OpenID Connect (Authentik, Keycloak and so on).
+The app drives Audiobookshelf's own sign-in for API clients, so it ends up holding the person's real
+access and refresh tokens; nothing is typed and no API key changes hands.
+
+**Set up (once):**
+
+1. In Audiobookshelf go to **Settings → Authentication → Allowed Mobile Redirect URIs** and add
+   `https://<this app's address>/api/auth/abs/sso/callback`, character for character. Do not use `*`:
+   with a single `*` entry Audiobookshelf accepts any redirect address, so another site could start
+   a flow that lands its code somewhere else.
+2. Set `AUDIOBOOKSHELF_URL` (single sign-on is only offered when the server is fixed) and, if that is
+   an internal name, `AUDIOBOOKSHELF_PUBLIC_URL` too.
+3. If Audiobookshelf accounts already exist for your people, set **Match Existing By** to `email` in
+   Audiobookshelf. Without it the first sign-in creates a second account with the same name and
+   separate progress. Check whether Audiobookshelf **auto-registers** new accounts too: if it does,
+   anyone who can reach this app can have an account created by clicking Connect, so restrict who
+   can reach it.
+
+**If it does not work:** a person who is sent back to the setup screen sees whether the sign-in
+expired (start again) or single sign-on is unavailable, and can use an API key or password instead.
+The most common cause of "unavailable" is the redirect address in step 1 not matching exactly.
+Audiobookshelf answers 400 `No session` when its session cookie was lost between the two halves of
+the flow, so check that first if every attempt fails.
 
 ## Admin analytics
 
