@@ -68,6 +68,7 @@ public partial class TransferOrchestratorTests
         updates.Select(u => (u.Status, u.ProgressPercent, u.CurrentStep)).Should().Equal(
             (TransferStatus.DownloadingAudio, 5, "Downloading audio"),
             (TransferStatus.UploadingToYoto, 20, "Uploading & transcoding on Yoto"),
+            (TransferStatus.UploadingToYoto, 20, "Track 1/1 is on Yoto"),
             (TransferStatus.GeneratingIcons, 70, "Generating chapter icons"),
             (TransferStatus.CreatingCard, 85, "Creating Yoto card"),
             (TransferStatus.Completed, 100, "Transfer complete"));

@@ -1,12 +1,15 @@
 import { ref } from 'vue'
 import { HubConnectionBuilder, HubConnection, LogLevel } from '@microsoft/signalr'
-import type { TransferProgressUpdate } from '@/types'
+import type { TrackLiveState, TransferProgressUpdate } from '@/types'
 
 // Shared singletons across every component that uses the hub, so the single
 // 'TransferProgress' handler updates one map that all views render from.
 const connection = ref<HubConnection | null>(null)
 const isConnected = ref(false)
 const progressUpdates = ref<Map<string, TransferProgressUpdate>>(new Map())
+// The latest word on each track of each transfer, kept per track so an update about one track
+// never overwrites what was said about another. transferId -> trackId -> state.
+const trackStates = ref<Record<string, Record<string, TrackLiveState>>>({})
 // Bumped whenever the server broadcasts that the transfer list changed (e.g. a new transfer
 // was queued elsewhere), so list views can refresh without a manual reload.
 const listChangedAt = ref(0)
@@ -28,6 +31,16 @@ async function connect(): Promise<void> {
       const next = new Map(progressUpdates.value)
       next.set(update.transferId, update)
       progressUpdates.value = next
+
+      if (update.trackId && update.trackPhase) {
+        trackStates.value = {
+          ...trackStates.value,
+          [update.transferId]: {
+            ...trackStates.value[update.transferId],
+            [update.trackId]: { phase: update.trackPhase, percent: update.trackPercent ?? null },
+          },
+        }
+      }
     })
     conn.on('TransferListChanged', () => {
       listChangedAt.value = Date.now()
@@ -82,6 +95,7 @@ export function useSignalR() {
     leaveTransfer,
     isConnected,
     progressUpdates,
+    trackStates,
     listChangedAt,
   }
 }
