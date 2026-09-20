@@ -15,6 +15,7 @@ public class YotoService(
     ILogger<YotoService> logger) : IYotoService
 {
     private const int MaxTranscodePollAttempts = 360;
+    private const int MaxPercent = 100;
     private const int TranscodePollDelayMs = 5000;
     private const int MaxUploadAttempts = 4;
     private static readonly JsonSerializerOptions JsonWeb = new(JsonSerializerDefaults.Web);
@@ -237,13 +238,13 @@ public class YotoService(
         }
     }
 
+    // Seam for tests: production waits TranscodePollDelayMs between polls; tests do not wait.
+    protected virtual Task DelayBetweenTranscodePollsAsync(CancellationToken ct) =>
+        Task.Delay(TranscodePollDelayMs, ct);
+
     // Seam for tests: backoff is 2s, 4s, 8s in production; overridden to no-op in unit tests.
     protected virtual Task DelayBetweenUploadAttemptsAsync(int attempt, CancellationToken ct) =>
         Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
-
-    // Seam for tests: 5s between transcode polls in production; overridden to no-op in unit tests.
-    protected virtual Task DelayBetweenTranscodePollsAsync(CancellationToken ct) =>
-        Task.Delay(TranscodePollDelayMs, ct);
 
     /// <summary>
     /// A reset/closed connection during the request-body write throws HttpRequestException
@@ -264,9 +265,10 @@ public class YotoService(
     }
 
     public async Task<YotoTranscodeResponse> PollTranscodeStatusAsync(
-        string accessToken, string uploadId, CancellationToken ct = default)
+        string accessToken, string uploadId, IProgress<int>? progress = null, CancellationToken ct = default)
     {
         using var client = CreateApiClient(accessToken);
+        int? lastReportedPercent = null;
 
         for (var attempt = 0; attempt < MaxTranscodePollAttempts; attempt++)
         {
@@ -290,10 +292,15 @@ public class YotoService(
                 return result;
             }
 
-            // Stryker disable once Equality,Arithmetic : the condition only gates a progress log line
+            if (result.Percent is { } percent && percent != lastReportedPercent)
+            {
+                lastReportedPercent = percent;
+                progress?.Report(percent);
+            }
+
             if (attempt % 10 == 0)
-                logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: status={Status}",
-                    attempt, MaxTranscodePollAttempts, uploadId, result.Status ?? "null");
+                logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: phase={Phase} percent={Percent}",
+                    attempt, MaxTranscodePollAttempts, uploadId, result.Phase ?? "unknown", result.Percent?.ToString() ?? "unknown");
 
             await DelayBetweenTranscodePollsAsync(ct);
         }
@@ -349,10 +356,36 @@ public class YotoService(
         string? Str(string name) =>
             node.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
 
+        var (phase, percent) = ReadYotoProgress(node);
         return new YotoTranscodeResponse(
             Str("transcodedSha256"),
             TranscodedInfo: null,
-            Str("status") ?? Str("transcodeStatus"));
+            Str("status") ?? Str("transcodeStatus"),
+            phase,
+            percent);
+    }
+
+    /// <summary>Yoto reports how far it has got under <c>progress: { phase, percent }</c>.</summary>
+    private static (string? Phase, int? Percent) ReadYotoProgress(JsonElement transcode)
+    {
+        if (!transcode.TryGetProperty("progress", out var progress) || progress.ValueKind != JsonValueKind.Object)
+            return (null, null);
+
+        var phase = progress.TryGetProperty("phase", out var phaseElement) && phaseElement.ValueKind == JsonValueKind.String
+            ? phaseElement.GetString()
+            : null;
+        var hasPercent = progress.TryGetProperty("percent", out var percentElement)
+                         && percentElement.ValueKind == JsonValueKind.Number
+                         && percentElement.TryGetDouble(out _);
+
+        // Kept inside 0-100 here so nothing downstream has to trust what Yoto sends.
+        return (phase, hasPercent ? Math.Clamp((int)Math.Round(percentElement.GetDouble()), 0, MaxPercent) : null);
+    }
+
+    /// <summary>Reports on the calling thread, unlike <see cref="Progress{T}"/>, so reports arrive in order.</summary>
+    private sealed class InlineProgress(Action<int> onReport) : IProgress<int>
+    {
+        public void Report(int value) => onReport(value);
     }
 
     public async Task<string> UploadAndTranscodeAsync(
@@ -368,10 +401,13 @@ public class YotoService(
         await UploadAudioFileAsync(uploadInfo.UploadUrl, audioStream, contentLength, contentType, ct);
 
         // Step 3: Poll for transcode completion
-        progress?.Report(60);
-        var transcodeResult = await PollTranscodeStatusAsync(accessToken, uploadInfo.UploadId, ct);
+        progress?.Report(YotoUploadProgress.TranscodeStart);
+        var transcodeResult = await PollTranscodeStatusAsync(
+            accessToken, uploadInfo.UploadId,
+            progress is null ? null : new InlineProgress(yoto => progress.Report(YotoUploadProgress.FromTranscodePercent(yoto))),
+            ct);
 
-        progress?.Report(100);
+        progress?.Report(YotoUploadProgress.Complete);
         return transcodeResult.TranscodedSha256!;
     }
 

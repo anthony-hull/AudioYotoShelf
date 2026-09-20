@@ -200,7 +200,7 @@ public partial class TransferOrchestratorTests
         // 20 + trunc((i + p/100) / 2 * 50): track 1 -> 27 (p=30), 35 (p=60); track 2 -> 57 (p=50), 70 (p=100).
         seenProgress.Should().Equal(27, 35, 57, 70);
         updates.Select(u => u.CurrentStep).Should().Equal(
-            "Uploading track 1/2…", "Transcoding track 1/2 on Yoto…", "Uploading track 2/2…", "Transcoding track 2/2 on Yoto…");
+            "Uploading track 1/2…", "Transcoding track 1/2 on Yoto…", "Uploading track 2/2…", "Transcoding track 2/2 on Yoto… 100%");
     }
 
     [Fact]
