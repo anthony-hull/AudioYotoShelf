@@ -98,6 +98,19 @@ public class AdminControllerTests : IDisposable
     // Mutation-testing additions — time windows, filters, ordering and the day series
     // =========================================================================
 
+    /// <summary>
+    /// The controller reads the clock itself, so dates seeded from "today" would disagree with it if UTC midnight
+    /// fell mid-test. Waiting out the last few seconds of the day is cheaper than a test that fails once a night.
+    /// </summary>
+    private static async Task<DateOnly> StableUtcTodayAsync()
+    {
+        var now = DateTime.UtcNow;
+        var untilMidnight = now.Date.AddDays(1) - now;
+        if (untilMidnight < TimeSpan.FromSeconds(5))
+            await Task.Delay(untilMidnight + TimeSpan.FromMilliseconds(50));
+        return DateOnly.FromDateTime(DateTime.UtcNow);
+    }
+
     private static DateTimeOffset DaysAgo(double days) => DateTimeOffset.UtcNow.AddDays(-days);
 
     private async Task<T> GetOk<T>(Task<IActionResult> action) where T : class
@@ -199,7 +212,7 @@ public class AdminControllerTests : IDisposable
     [Fact]
     public async Task Usage_BucketsLoginsAndTransfersByUtcDay_OverTheRequestedWindow()
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = await StableUtcTodayAsync();
         DateTimeOffset At(int daysBack, int hour, int minute = 0, int second = 0) =>
             new(today.AddDays(-daysBack).ToDateTime(new TimeOnly(hour, minute, second)), TimeSpan.Zero);
 
@@ -237,9 +250,10 @@ public class AdminControllerTests : IDisposable
     [InlineData(1000, 90)]
     public async Task Usage_ClampsTheWindowToBetweenOneAndNinetyDays(int requested, int expectedPoints)
     {
+        var today = await StableUtcTodayAsync();   // before the call: the controller reads the clock during it
+
         var points = (await GetOk<IEnumerable<UsagePoint>>(_sut.Usage(requested, CancellationToken.None))).ToList();
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
         points.Should().HaveCount(expectedPoints);
         points[0].Date.Should().Be(today.AddDays(-(expectedPoints - 1)));
         points[^1].Date.Should().Be(today);
