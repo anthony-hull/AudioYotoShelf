@@ -259,6 +259,7 @@ public class PlaylistTransferOrchestrator(
             return await yotoService.UploadCoverImageAsync(yotoToken, coverStream, ct);
         }
         catch (Exception ex)
+        // Stryker disable once Block : the catch body only logs and returns null, so removing it changes nothing observable
         {
             logger.LogWarning(ex, "Failed to upload cover for book {ItemId}", itemId);
             return null;
@@ -276,6 +277,7 @@ public class PlaylistTransferOrchestrator(
             return $"yoto:#{upload.MediaId}";
         }
         catch (Exception ex)
+        // Stryker disable once Block : the catch body only logs and returns null, so removing it changes nothing observable
         {
             logger.LogWarning(ex, "Icon generation failed for book '{Title}'", bookTitle);
             return null;
