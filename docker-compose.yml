@@ -13,6 +13,7 @@ services:
       - Yoto__ClientSecret=${YOTO_CLIENT_SECRET}
       - Gemini__ApiKey=${GEMINI_API_KEY}
       - Audiobookshelf__Url=${AUDIOBOOKSHELF_URL:-}
+      - Audiobookshelf__PublicUrl=${AUDIOBOOKSHELF_PUBLIC_URL:-}
       - Admin__AudiobookshelfUrl=${ADMIN_AUDIOBOOKSHELF_URL:-}
       - Admin__Usernames=${ADMIN_USERNAMES:-}
       - Transfer__TempDirectory=/app/temp

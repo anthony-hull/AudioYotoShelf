@@ -1,17 +1,38 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { authApi } from '@/services/api'
 import { useConnectionStore } from '@/stores/connectionStore'
 import type { AbsConnectRequest } from '@/types'
 
 type AbsSignInMethod = 'password' | 'apiKey'
 
+// A plain link, not an API call: this is a top-level navigation to the identity provider and back.
+const SSO_START_URL = '/api/auth/abs/sso/start'
+
+// Why the server sent the person back here without connecting them. A Map rather than an object
+// so an arbitrary ?sso= value from the address bar cannot land on an inherited property.
+const SSO_NOTICES = new Map([
+  ['expired', 'That sign-in expired. Try again.'],
+  [
+    'unavailable',
+    "Single sign-on isn't available right now. Use an API key or password instead.",
+  ],
+])
+
 const router = useRouter()
+const route = useRoute()
 const connectionStore = useConnectionStore()
+
+const ssoNotice = computed(() => SSO_NOTICES.get(String(route.query.sso ?? '')) ?? null)
 
 // ABS form
 const isServerUrlLocked = ref(false)
+// Single sign-on only works against the configured server, so it is offered exactly when the URL
+// is locked. When it has just failed, skip straight to the methods that might work.
+const isUsingOtherMethod = ref(route.query.sso === 'unavailable')
+const isSsoOffered = computed(() => isServerUrlLocked.value)
+const isFormShown = computed(() => !isSsoOffered.value || isUsingOtherMethod.value)
 const signInMethod = ref<AbsSignInMethod>('password')
 // Left empty deliberately: a guessed default gets posted to a locked server and rejected with a
 // 400 the person cannot act on. The placeholder shows the shape without sending one.
@@ -78,7 +99,34 @@ function goToLibrary() {
         </span>
       </div>
 
-      <form v-if="!connectionStore.isAbsConnected" @submit.prevent="connectAbs" class="space-y-4">
+      <div v-if="!connectionStore.isAbsConnected && isSsoOffered" class="space-y-3">
+        <p v-if="ssoNotice" data-test="sso-notice" role="status" class="text-sm text-amber-700">
+          {{ ssoNotice }}
+        </p>
+        <a
+          :href="SSO_START_URL"
+          data-test="sso-connect"
+          class="btn-primary block w-full py-3 text-center"
+        >
+          Connect with single sign-on
+        </a>
+        <button
+          v-if="!isUsingOtherMethod"
+          type="button"
+          data-test="other-methods"
+          class="block w-full min-h-11 text-sm text-gray-500 underline"
+          @click="isUsingOtherMethod = true"
+        >
+          Use a different method
+        </button>
+      </div>
+
+      <form
+        v-if="!connectionStore.isAbsConnected && isFormShown"
+        @submit.prevent="connectAbs"
+        :class="{ 'mt-4': isSsoOffered }"
+        class="space-y-4"
+      >
         <div v-if="!isServerUrlLocked">
           <label class="block text-sm font-medium text-gray-700 mb-1">Server URL</label>
           <input
@@ -157,7 +205,7 @@ function goToLibrary() {
         </button>
       </form>
 
-      <div v-else class="text-sm text-gray-600">
+      <div v-if="connectionStore.isAbsConnected" class="text-sm text-gray-600">
         Connected as <strong>{{ connectionStore.username }}</strong> to
         {{ connectionStore.status?.audiobookshelfUrl }}
       </div>
