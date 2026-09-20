@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text.Json;
+using AudioYotoShelf.Core;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Configuration;
@@ -380,11 +381,6 @@ public class YotoService(
         return (phase, hasPercent ? Math.Clamp((int)Math.Round(percentElement.GetDouble()), 0, MaxPercent) : null);
     }
 
-    /// <summary>Reports on the calling thread, unlike <see cref="Progress{T}"/>, so reports arrive in order.</summary>
-    private sealed class InlineProgress(Action<int> onReport) : IProgress<int>
-    {
-        public void Report(int value) => onReport(value);
-    }
 
     public async Task<string> UploadAndTranscodeAsync(
         string accessToken, Stream audioStream, long contentLength, string contentType,
@@ -402,7 +398,7 @@ public class YotoService(
         progress?.Report(YotoUploadProgress.TranscodeStart);
         var transcodeResult = await PollTranscodeStatusAsync(
             accessToken, uploadInfo.UploadId,
-            progress is null ? null : new InlineProgress(yoto => progress.Report(YotoUploadProgress.FromTranscodePercent(yoto))),
+            progress is null ? null : new InlineProgress<int>(yoto => progress.Report(YotoUploadProgress.FromTranscodePercent(yoto))),
             ct);
 
         progress?.Report(YotoUploadProgress.Complete);

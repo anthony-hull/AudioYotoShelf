@@ -13,6 +13,17 @@ public enum TransferStatus
     Cancelled
 }
 
+/// <summary>Where one track is in its journey to Yoto, as far as the server can say while a transfer runs.</summary>
+public enum TrackPhase
+{
+    Downloading,
+    Uploading,
+    Transcoding,
+    Uploaded,
+    /// <summary>Yoto already held this audio from an earlier transfer, so nothing was sent.</summary>
+    Reused
+}
+
 public enum YotoCategory
 {
     Stories,
