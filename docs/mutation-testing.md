@@ -9,6 +9,11 @@ what is excluded, what cannot be mutated, and what only looks like a gap. Each e
 
 ## Running it
 
+**Local only, by design: there is no CI job.** A mutation run is expensive (about 4 minutes on 20 cores, and a
+GitHub runner has 4), so it is not run on every push. **Run the Core gate before you merge anything that touches
+`AudioYotoShelf.Core`, and the whole-solution run before a larger change.** Do not add a workflow for it without
+weighing that cost; the reasoning is in `DECISIONS.md`.
+
 Stryker is pinned in `dotnet-tools.json`. The SDK is in `~/.dotnet` for local work (`export PATH=$HOME/.dotnet:$PATH`).
 
 ```bash
@@ -149,5 +154,5 @@ look at what is new, not at this list.
 Three Stryker runs at once (`--concurrency 5` each) roughly doubled every time, so parallel work needs a separate
 git worktree per run: two runs in one tree fight over `obj/`.
 
-GitHub-hosted runners have 4 cores, so expect roughly 4-5x longer in CI (an estimate from core count, not measured).
+A 4-core machine will take roughly 4-5x longer (an estimate from core count, not measured).
 Run Stryker against a **green** suite only: a test that already fails proves nothing about a mutant.

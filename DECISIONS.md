@@ -25,7 +25,11 @@ methods Stryker cannot mutate are in `docs/mutation-testing.md`.
 signal is always added), and the test named for it asserted loose ranges that never exercised it. The dead branch was
 deleted; the test now asserts what the code does (the duration bucket).
 
-**Rollback.** Delete `stryker-config*.json`, `dotnet-tools.json`, `.github/workflows/mutation.yml`; nothing in `src/`
+**Not in CI (2026-09-20, Anthony).** Mutation runs are expensive, so no workflow runs them: not on pull requests, not on
+a schedule, not on demand. The gates are run locally before merging. An earlier draft had a `mutation.yml` that ran both
+on PRs and weekly; it was removed before it ever ran.
+
+**Rollback.** Delete `stryker-config*.json`, `dotnet-tools.json`, `scripts/mutation-summary.py`; nothing in `src/`
 depends on them. The source refactors are behaviour-preserving and stay.
 
 ## 2026-09-20 — Findings from mutation testing, and what became of them

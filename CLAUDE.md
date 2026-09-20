@@ -11,4 +11,5 @@ mutants, generated code), so those are not re-investigated.
 
 - Core gate: `dotnet stryker --config-file stryker-config.core.json` (~1 min, must stay >= 95%).
 - Whole solution: `dotnet stryker` (~3 min, floor 94%). Read results with `python3 scripts/mutation-summary.py --survivors`, not the console table.
+- There is deliberately **no CI job** for mutation testing (too expensive). Run the gates locally before merging; never add a workflow for it.
 - Never lower a `break` threshold or delete an exclusion glob without a `DECISIONS.md` entry.
