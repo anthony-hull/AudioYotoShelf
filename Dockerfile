@@ -29,8 +29,9 @@ RUN dotnet publish src/AudioYotoShelf.Api/AudioYotoShelf.Api.csproj \
 # Stage 3: Runtime with FFmpeg
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
+# curl is for the HEALTHCHECK below; the aspnet base image does not include it.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
+    apt-get install -y --no-install-recommends ffmpeg curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -46,7 +47,9 @@ ENV ASPNETCORE_URLS=http://+:8080
 ENV ASPNETCORE_ENVIRONMENT=Production
 ENV TMPDIR=/app/temp
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:8080/api/health || exit 1
+# Liveness only: /api/health also probes Postgres, Redis and ffmpeg, so a slow first boot (EF
+# migrations against a cold database) would report unhealthy — and proxies skip unhealthy containers.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
+    CMD curl -f http://localhost:8080/health/live || exit 1
 
 ENTRYPOINT ["dotnet", "AudioYotoShelf.Api.dll"]

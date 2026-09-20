@@ -10,6 +10,9 @@ public class AudiobookshelfService(
     IHttpClientFactory httpClientFactory,
     ILogger<AudiobookshelfService> logger) : IAudiobookshelfService
 {
+    // ABS only routes POST here; a GET falls through to a 404.
+    private const string AuthorizePath = "/api/authorize";
+
     private HttpClient CreateClient(string baseUrl, string token)
     {
         var client = httpClientFactory.CreateClient("Audiobookshelf");
@@ -56,12 +59,22 @@ public class AudiobookshelfService(
             ?? throw new InvalidOperationException("Failed to deserialize ABS refresh response");
     }
 
+    public async Task<AbsLoginResponse> AuthorizeApiKeyAsync(string baseUrl, string apiKey, CancellationToken ct = default)
+    {
+        using var client = CreateClient(baseUrl, apiKey);
+        var response = await client.PostAsync(AuthorizePath, null, ct);
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadFromJsonAsync<AbsLoginResponse>(ct)
+            ?? throw new InvalidOperationException("Failed to deserialize ABS authorize response");
+    }
+
     public async Task<bool> ValidateTokenAsync(string baseUrl, string token, CancellationToken ct = default)
     {
         try
         {
             using var client = CreateClient(baseUrl, token);
-            var response = await client.GetAsync("/api/authorize", ct);
+            var response = await client.PostAsync(AuthorizePath, null, ct);
             return response.IsSuccessStatusCode;
         }
         catch (Exception ex)

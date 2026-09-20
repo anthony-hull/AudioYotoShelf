@@ -13,7 +13,22 @@ public sealed class FakeAudiobookshelfService : IAudiobookshelfService
     /// <summary>Username the fake ABS server reports for the next login.</summary>
     public string Username { get; set; } = "alice";
 
+    /// <summary>Base URL of the most recent login or API-key authorize call.</summary>
+    public string? LastBaseUrl { get; private set; }
+
     public Task<AbsLoginResponse> LoginAsync(string baseUrl, string username, string password, CancellationToken ct = default)
+    {
+        LastBaseUrl = baseUrl;
+        return Task.FromResult(CurrentUserResponse());
+    }
+
+    public Task<AbsLoginResponse> AuthorizeApiKeyAsync(string baseUrl, string apiKey, CancellationToken ct = default)
+    {
+        LastBaseUrl = baseUrl;
+        return Task.FromResult(CurrentUserResponse());
+    }
+
+    private AbsLoginResponse CurrentUserResponse()
     {
         var user = new AbsUser(
             Id: "abs-user-1",
@@ -25,7 +40,7 @@ public sealed class FakeAudiobookshelfService : IAudiobookshelfService
             LibrariesAccessible: ["lib-1"],
             AccessToken: null,
             RefreshToken: null);
-        return Task.FromResult(new AbsLoginResponse(user, "lib-1"));
+        return new AbsLoginResponse(user, "lib-1");
     }
 
     public Task<bool> ValidateTokenAsync(string baseUrl, string token, CancellationToken ct = default) =>

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.Hosting;
 
 namespace AudioYotoShelf.IntegrationTests;
 
@@ -19,6 +20,48 @@ public class AuthIntegrationTests(IntegrationTestFactory factory) : IClassFixtur
             "/api/auth/abs/connect", new { baseUrl, username = "x", password = "y" });
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
         return client;
+    }
+
+    /// <summary>A client for an app with its Audiobookshelf server fixed by configuration.</summary>
+    private HttpClient CreateClientWithConfiguredServer() =>
+        factory.WithWebHostBuilder(b => b.UseSetting("Audiobookshelf:Url", IntegrationTestFactory.AdminAbsUrl))
+            .CreateClient();
+
+    [Fact]
+    public async Task ApiKeyConnect_WithConfiguredServer_ConnectsToThatServer()
+    {
+        factory.Abs.Username = "keyholder";
+        var client = CreateClientWithConfiguredServer();
+
+        var resp = await client.PostAsJsonAsync("/api/auth/abs/connect", new { apiKey = "abs-api-key" });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        factory.Abs.LastBaseUrl.Should().Be(IntegrationTestFactory.AdminAbsUrl);
+        var status = await client.GetFromJsonAsync<JsonElement>("/api/auth/status");
+        status.GetProperty("username").GetString().Should().Be("keyholder");
+    }
+
+    [Fact]
+    public async Task ApiKeyConnect_AdminUserOnConfiguredServer_GetsAdminSession()
+    {
+        // Admin promotion keys off the server actually used, so omitting the URL in favour of the
+        // configured one must still count as the trusted admin server.
+        factory.Abs.Username = "adminuser";
+        var client = CreateClientWithConfiguredServer();
+        await client.PostAsJsonAsync("/api/auth/abs/connect", new { apiKey = "abs-api-key" });
+
+        var resp = await client.GetAsync("/api/admin/overview");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ConnectOptions_AnonymousCaller_SeesServerUrlLocked()
+    {
+        var json = await CreateClientWithConfiguredServer()
+            .GetFromJsonAsync<JsonElement>("/api/auth/abs/options");
+
+        json.GetProperty("isServerUrlLocked").GetBoolean().Should().BeTrue();
     }
 
     [Fact]

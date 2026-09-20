@@ -21,12 +21,18 @@ public class ValidatorTests
             .ShouldNotHaveAnyValidationErrors();
 
     [Theory]
-    [InlineData("")]
     [InlineData("ftp://server.com")]
     [InlineData("not-a-url")]
     public void AbsConnect_InvalidUrl_Fails(string url) =>
         _absValidator.TestValidate(new AuthController.AbsConnectRequest(url, "user", "pass"))
             .ShouldHaveValidationErrorFor(x => x.BaseUrl);
+
+    [Fact]
+    public void AbsConnect_NoUrl_Passes() =>
+        // The server may have its Audiobookshelf URL configured; the controller rejects a missing
+        // URL when it does not.
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest(null, "user", "pass"))
+            .ShouldNotHaveAnyValidationErrors();
 
     [Fact]
     public void AbsConnect_EmptyUsername_Fails() =>
@@ -37,6 +43,35 @@ public class ValidatorTests
     public void AbsConnect_EmptyPassword_Fails() =>
         _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", "user", ""))
             .ShouldHaveValidationErrorFor(x => x.Password);
+
+    [Fact]
+    public void AbsConnect_ApiKeyOnly_Passes() =>
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", ApiKey: "key"))
+            .ShouldNotHaveAnyValidationErrors();
+
+    [Fact]
+    public void AbsConnect_ApiKeyAndPassword_Fails() =>
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", "user", "pass", "key"))
+            .ShouldHaveValidationErrorFor(x => x.ApiKey);
+
+    [Theory]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public void AbsConnect_BlankApiKey_Fails(string apiKey) =>
+        // Blank is not a credential: without this the app sends "Bearer    " to ABS and turns its
+        // refusal into a 502, where the caller should have got a 400.
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", ApiKey: apiKey))
+            .ShouldHaveValidationErrors();
+
+    [Fact]
+    public void AbsConnect_OverlongApiKey_Fails() =>
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", ApiKey: new string('k', 4097)))
+            .ShouldHaveValidationErrorFor(x => x.ApiKey);
+
+    [Fact]
+    public void AbsConnect_NoCredentials_Fails() =>
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com"))
+            .ShouldHaveValidationErrors();
 
     // =========================================================================
     // CreateTransferRequestValidator
@@ -62,7 +97,7 @@ public class ValidatorTests
     [Fact]
     public void Transfer_MinOverMax_Fails() =>
         _transferValidator.TestValidate(new CreateTransferRequest("item-1", OverrideMinAge: 10, OverrideMaxAge: 5))
-            .ShouldHaveAnyValidationError();
+            .ShouldHaveValidationErrors();
 
     [Fact]
     public void Transfer_AgeOutOfRange_Fails() =>
@@ -122,12 +157,12 @@ public class ValidatorTests
     [Fact]
     public void Batch_EmptyItemInArray_Fails() =>
         _batchValidator.TestValidate(new BatchTransferRequest(["item-1", "", "item-3"]))
-            .ShouldHaveAnyValidationError();
+            .ShouldHaveValidationErrors();
 
     [Fact]
     public void Batch_MinOverMax_Fails() =>
         _batchValidator.TestValidate(new BatchTransferRequest(["item-1"], OverrideMinAge: 10, OverrideMaxAge: 5))
-            .ShouldHaveAnyValidationError();
+            .ShouldHaveValidationErrors();
 
     [Fact]
     public void Batch_Exactly50_Passes()
@@ -151,7 +186,7 @@ public class ValidatorTests
     [Fact]
     public void Settings_MinOverMax_Fails() =>
         _settingsValidator.TestValidate(new UpdateSettingsRequest(DefaultMinAge: 10, DefaultMaxAge: 5))
-            .ShouldHaveAnyValidationError();
+            .ShouldHaveValidationErrors();
 
     [Fact]
     public void Settings_OutOfRange_Fails() =>

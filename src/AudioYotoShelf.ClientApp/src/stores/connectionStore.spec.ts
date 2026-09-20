@@ -84,10 +84,59 @@ describe('connectionStore', () => {
     } as never)
     const store = useConnectionStore()
 
-    await store.connectToAbs('http://abs.local', 'alice', 'pw')
+    await store.connectToAbs({ baseUrl: 'http://abs.local', username: 'alice', password: 'pw' })
 
     expect(store.userConnectionId).toBe('conn-new')
     expect(authApi.getConnectionStatus).toHaveBeenCalled()
+  })
+
+  it('connectToAbs passes an API key through instead of a password', async () => {
+    vi.mocked(authApi.connectAbs).mockResolvedValue({
+      data: { userConnectionId: 'conn-key' },
+    } as never)
+    vi.mocked(authApi.getConnectionStatus).mockResolvedValue({ data: status() } as never)
+    const store = useConnectionStore()
+
+    await store.connectToAbs({ apiKey: 'abs-key' })
+
+    expect(authApi.connectAbs).toHaveBeenCalledWith({ apiKey: 'abs-key' })
+  })
+
+  it('surfaces the server error message rather than the bare axios status', async () => {
+    // Axios puts "Request failed with status code 400" in err.message; the reason the server gave
+    // is in the response body, and that is the part the person needs to read.
+    vi.mocked(authApi.connectAbs).mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 400'), {
+        response: { data: 'This app only connects to its configured Audiobookshelf server' },
+      }),
+    )
+    const store = useConnectionStore()
+
+    await store.connectToAbs({ apiKey: 'abs-key' })
+
+    expect(store.error).toBe('This app only connects to its configured Audiobookshelf server')
+  })
+
+  it('reads a ProblemDetails body when the server sends one', async () => {
+    vi.mocked(authApi.connectAbs).mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 400'), {
+        response: { data: { detail: 'Audiobookshelf server URL is required' } },
+      }),
+    )
+    const store = useConnectionStore()
+
+    await store.connectToAbs({ apiKey: 'abs-key' })
+
+    expect(store.error).toBe('Audiobookshelf server URL is required')
+  })
+
+  it('falls back to the error message when the response carries no body', async () => {
+    vi.mocked(authApi.connectAbs).mockRejectedValue(new Error('Network Error'))
+    const store = useConnectionStore()
+
+    await store.connectToAbs({ apiKey: 'abs-key' })
+
+    expect(store.error).toBe('Network Error')
   })
 
   it('logout clears local state and signs out on the server', () => {
