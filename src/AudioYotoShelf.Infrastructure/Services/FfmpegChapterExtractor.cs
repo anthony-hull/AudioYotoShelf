@@ -21,7 +21,9 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IPro
             Path.GetTempPath(),
             $"chapter_{Guid.NewGuid():N}.{outputFormat}");
 
-        var args = $"-i \"{inputFilePath}\" -ss {startSeconds:F3} -to {endSeconds:F3} -c copy -y \"{outputPath}\"";
+        // ffmpeg parses a decimal point only; the current culture must not turn 12.500 into 12,500.
+        var args = FormattableString.Invariant(
+            $"-i \"{inputFilePath}\" -ss {startSeconds:F3} -to {endSeconds:F3} -c copy -y \"{outputPath}\"");
 
         await RunFfmpegAsync(args, "chapter extraction", ct);
 
@@ -75,7 +77,7 @@ public class FfmpegChapterExtractor(ILogger<FfmpegChapterExtractor> logger, IPro
         var token = Guid.NewGuid().ToString("N");
         var pattern = Path.Combine(Path.GetTempPath(), $"segment_{token}_%03d.{outputFormat}");
 
-        var args = $"-i \"{inputFilePath}\" -f segment -segment_time {segmentSeconds:F3} " +
+        var args = FormattableString.Invariant($"-i \"{inputFilePath}\" -f segment -segment_time {segmentSeconds:F3} ") +
                    $"-c copy -reset_timestamps 1 -y \"{pattern}\"";
         await RunFfmpegAsync(args, "split", ct);
 
