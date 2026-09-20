@@ -54,6 +54,20 @@ public class ValidatorTests
         _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", "user", "pass", "key"))
             .ShouldHaveValidationErrorFor(x => x.ApiKey);
 
+    [Theory]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public void AbsConnect_BlankApiKey_Fails(string apiKey) =>
+        // Blank is not a credential: without this the app sends "Bearer    " to ABS and turns its
+        // refusal into a 502, where the caller should have got a 400.
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", ApiKey: apiKey))
+            .ShouldHaveValidationErrors();
+
+    [Fact]
+    public void AbsConnect_OverlongApiKey_Fails() =>
+        _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com", ApiKey: new string('k', 4097)))
+            .ShouldHaveValidationErrorFor(x => x.ApiKey);
+
     [Fact]
     public void AbsConnect_NoCredentials_Fails() =>
         _absValidator.TestValidate(new AuthController.AbsConnectRequest("http://x.com"))

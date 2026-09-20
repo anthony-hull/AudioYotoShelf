@@ -13,10 +13,13 @@ const connectionStore = useConnectionStore()
 // ABS form
 const isServerUrlLocked = ref(false)
 const signInMethod = ref<AbsSignInMethod>('password')
-const absUrl = ref('http://localhost:13378')
+// Left empty deliberately: a guessed default gets posted to a locked server and rejected with a
+// 400 the person cannot act on. The placeholder shows the shape without sending one.
+const absUrl = ref('')
 const absUsername = ref('')
 const absPassword = ref('')
 const absApiKey = ref('')
+const formError = ref<string | null>(null)
 
 onMounted(async () => {
   try {
@@ -25,6 +28,7 @@ onMounted(async () => {
   } catch (err: unknown) {
     // Older servers lack this endpoint; asking for the URL is the safe fallback.
     console.warn('Could not load Audiobookshelf connect options', err)
+    isServerUrlLocked.value = false
   }
 })
 
@@ -38,6 +42,12 @@ function buildConnectRequest(): AbsConnectRequest {
 }
 
 async function connectAbs() {
+  // Not just the `required` attribute: the browser enforces that, nothing else does.
+  if (!isServerUrlLocked.value && !absUrl.value.trim()) {
+    formError.value = 'Enter your Audiobookshelf server URL'
+    return
+  }
+  formError.value = null
   await connectionStore.connectToAbs(buildConnectRequest())
 }
 
@@ -152,8 +162,12 @@ function goToLibrary() {
         {{ connectionStore.status?.audiobookshelfUrl }}
       </div>
 
-      <p v-if="connectionStore.error" class="mt-2 text-sm text-red-600">
-        {{ connectionStore.error }}
+      <p
+        v-if="formError || connectionStore.error"
+        data-test="abs-error"
+        class="mt-2 text-sm text-red-600"
+      >
+        {{ formError ?? connectionStore.error }}
       </p>
     </div>
 

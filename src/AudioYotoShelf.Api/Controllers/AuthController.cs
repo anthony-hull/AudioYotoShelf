@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Infrastructure.Data;
@@ -48,7 +49,7 @@ public class AuthController(
                 ? "Audiobookshelf server URL is required"
                 : "This app only connects to its configured Audiobookshelf server");
 
-        var usesApiKey = !string.IsNullOrEmpty(request.ApiKey);
+        var usesApiKey = !string.IsNullOrWhiteSpace(request.ApiKey);
         var loginResponse = usesApiKey
             ? await absService.AuthorizeApiKeyAsync(baseUrl, request.ApiKey!, ct)
             : await absService.LoginAsync(baseUrl, request.Username!, request.Password!, ct);
@@ -84,7 +85,7 @@ public class AuthController(
         // reported by an arbitrary server — requiring the trusted URL forces a real login against it.
         var adminAbsUrl = configuration["Admin:AudiobookshelfUrl"];
         var fromAdminServer = !string.IsNullOrWhiteSpace(adminAbsUrl) &&
-            string.Equals(baseUrl, adminAbsUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+            AudiobookshelfServer.IsSameServer(baseUrl, adminAbsUrl);
         var adminUsernames = (configuration["Admin:Usernames"] ?? configuration["ADMIN_USERNAMES"] ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (fromAdminServer && adminUsernames.Contains(absUser.Username, StringComparer.OrdinalIgnoreCase))
@@ -124,9 +125,7 @@ public class AuthController(
     }
 
     private string? ConfiguredAbsUrl =>
-        string.IsNullOrWhiteSpace(configuration["Audiobookshelf:Url"])
-            ? null
-            : configuration["Audiobookshelf:Url"]!.TrimEnd('/');
+        AudiobookshelfServer.ResolveConfiguredUrl(configuration[AudiobookshelfServer.UrlConfigKey]);
 
     /// <summary>
     /// The Audiobookshelf server a connect request may use: the configured server when set (a
@@ -138,8 +137,7 @@ public class AuthController(
         if (ConfiguredAbsUrl is null)
             return requested;
 
-        var matchesConfigured = requested is null ||
-            string.Equals(requested, ConfiguredAbsUrl, StringComparison.OrdinalIgnoreCase);
+        var matchesConfigured = requested is null || AudiobookshelfServer.IsSameServer(requested, ConfiguredAbsUrl);
         return matchesConfigured ? ConfiguredAbsUrl : null;
     }
 

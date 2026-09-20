@@ -1,6 +1,7 @@
 using AudioYotoShelf.Api.Health;
 using AudioYotoShelf.Api.Hubs;
 using AudioYotoShelf.Api.Middleware;
+using AudioYotoShelf.Core.Configuration;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Infrastructure.Caching;
@@ -40,6 +41,11 @@ builder.Host.UseSerilog((context, loggerConfig) =>
     if (!string.IsNullOrEmpty(seqUrl))
         loggerConfig.WriteTo.Seq(seqUrl);
 });
+
+// The one Audiobookshelf server this deployment may talk to, if configured. Resolved here so a
+// malformed URL stops the boot rather than failing every connect with a generic 500.
+var configuredAbsUrl = AudiobookshelfServer.ResolveConfiguredUrl(
+    builder.Configuration[AudiobookshelfServer.UrlConfigKey]);
 
 // --- Database ---
 builder.Services.AddDbContext<AudioYotoShelfDbContext>(options =>
@@ -259,6 +265,12 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AudioYotoShelfDbContext>();
     await db.Database.MigrateAsync();
+
+    if (configuredAbsUrl is not null)
+    {
+        var absLockLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        await AbsServerLock.RepointConnectionsAsync(db, configuredAbsUrl, absLockLogger);
+    }
 
     var ffmpeg = scope.ServiceProvider.GetRequiredService<IChapterExtractor>();
     var ffmpegAvailable = await ffmpeg.IsFfmpegAvailableAsync();
