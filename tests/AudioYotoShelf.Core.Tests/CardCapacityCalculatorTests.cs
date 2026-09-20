@@ -134,4 +134,118 @@ public class CardCapacityCalculatorTests
         result.ExceedsDuration.Should().BeTrue();
         result.FirstOverflowItemId.Should().Be("book-2");
     }
+
+    // =========================================================================
+    // Mutation-testing additions — exact boundaries and the user-facing messages
+    // =========================================================================
+
+    private static SourceTrack[] Tracks(int count, double seconds, long bytes) =>
+        Enumerable.Range(0, count).Select(i => new SourceTrack($"c{i}", seconds, bytes)).ToArray();
+
+    [Fact]
+    public void Calculate_ExactlyMaxTracks_DoesNotFlagAnyBookAsOverflow()
+    {
+        var result = _sut.Calculate([Book("b1", Tracks(100, 60, 1_000_000))]);
+
+        result.ExceedsTracks.Should().BeFalse();
+        result.FirstOverflowItemId.Should().BeNull();
+    }
+
+    [Fact]
+    public void Calculate_ExactlyMaxDuration_DoesNotFlagAnyBookAsOverflow()
+    {
+        var result = _sut.Calculate([Book("b1", Tracks(5, 3600, 1_000_000))]); // 5h exactly
+
+        result.ExceedsDuration.Should().BeFalse();
+        result.FirstOverflowItemId.Should().BeNull();
+    }
+
+    [Fact]
+    public void Calculate_ExactlyMaxBytes_DoesNotFlagAnyBookAsOverflow()
+    {
+        var result = _sut.Calculate([Book("b1", Tracks(5, 60, 100L * 1024 * 1024))]); // 500 MB exactly
+
+        result.ExceedsBytes.Should().BeFalse();
+        result.FirstOverflowItemId.Should().BeNull();
+    }
+
+    [Fact]
+    public void Calculate_OneTrackOverMax_FlagsTheBook()
+    {
+        var result = _sut.Calculate([Book("b1", Tracks(101, 60, 1_000_000))]);
+
+        result.ExceedsTracks.Should().BeTrue();
+        result.FirstOverflowItemId.Should().Be("b1");
+    }
+
+    [Fact]
+    public void Calculate_OneSecondOverMaxDuration_FlagsTheBook()
+    {
+        var result = _sut.Calculate([Book("b1", [.. Tracks(5, 3600, 1_000_000), new SourceTrack("extra", 1, 1_000_000)])]);
+
+        result.ExceedsDuration.Should().BeTrue();
+        result.FirstOverflowItemId.Should().Be("b1");
+    }
+
+    [Fact]
+    public void Calculate_OneByteOverMaxBytes_FlagsTheBook()
+    {
+        var result = _sut.Calculate([Book("b1", [.. Tracks(5, 60, 100L * 1024 * 1024), new SourceTrack("extra", 60, 1)])]);
+
+        result.ExceedsBytes.Should().BeTrue();
+        result.FirstOverflowItemId.Should().Be("b1");
+    }
+
+    [Fact]
+    public void Calculate_SeveralBooksOverflow_ReportsTheFirstOne()
+    {
+        var fits = Book("fits", new SourceTrack("c", 3600, 1_000_000));
+        var firstOver = Book("first-over", Tracks(5, 3600, 1_000_000));
+        var secondOver = Book("second-over", new SourceTrack("c", 60, 1_000_000));
+
+        _sut.Calculate([fits, firstOver, secondOver]).FirstOverflowItemId.Should().Be("first-over");
+    }
+
+    [Fact]
+    public void Calculate_WithinLimits_HasNoMessages()
+    {
+        _sut.Calculate([Book("b1", Tracks(2, 60, 1_000_000))]).Messages.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Calculate_TooManyTracks_ExplainsTheTrackLimit()
+    {
+        var result = _sut.Calculate([Book("b1", Tracks(101, 60, 1_000_000))]);
+
+        result.Messages.Should().Equal("Track count 101 exceeds the limit of 100.");
+    }
+
+    [Fact]
+    public void Calculate_TooLong_ExplainsTheDurationLimit()
+    {
+        var result = _sut.Calculate([Book("b1", Tracks(6, 3600, 1_000_000))]);
+
+        result.Messages.Should().Equal("Total duration 6.0h exceeds the limit of 5.0h.");
+    }
+
+    [Fact]
+    public void Calculate_TooLarge_ExplainsTheSizeLimit()
+    {
+        var result = _sut.Calculate([Book("b1", new SourceTrack("c1", 60, 600L * 1024 * 1024))]);
+
+        result.Messages.Should().Equal("Estimated size 600MB exceeds the limit of 500MB.");
+    }
+
+    [Fact]
+    public void Calculate_ExceedingEveryLimit_ListsTracksThenDurationThenSize()
+    {
+        // 101 one-hour tracks of 6 MB: 101 tracks, 101 h, 606 MB.
+        var result = _sut.Calculate([Book("b1", Tracks(101, 3600, 6L * 1024 * 1024))]);
+
+        result.WithinLimits.Should().BeFalse();
+        result.Messages.Should().Equal(
+            "Track count 101 exceeds the limit of 100.",
+            "Total duration 101.0h exceeds the limit of 5.0h.",
+            "Estimated size 606MB exceeds the limit of 500MB.");
+    }
 }
