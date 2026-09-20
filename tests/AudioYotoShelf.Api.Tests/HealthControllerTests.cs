@@ -89,6 +89,23 @@ public class HealthControllerTests
     }
 
     [Fact]
+    public async Task Get_PostgresUnreachable_Returns503EvenThoughEfDoesNotThrow()
+    {
+        // CanConnectAsync returns false for an unreachable server rather than throwing, so this is the
+        // case the Docker HEALTHCHECK depends on: it must not report the database healthy.
+        using var db = TestDatabases.UnreachablePostgres();
+
+        var (status, json) = await GetHealthAsync(db, WorkingCache(), Ffmpeg(true));
+
+        status.Should().Be(503);
+        using var doc = JsonDocument.Parse(json);
+        var postgres = doc.RootElement.GetProperty("postgres");
+        postgres.GetProperty("status").GetString().Should().Be("unhealthy");
+        postgres.GetProperty("error").GetString().Should().Be("Cannot connect to PostgreSQL");
+        doc.RootElement.GetProperty("redis").GetProperty("status").GetString().Should().Be("healthy");
+    }
+
+    [Fact]
     public async Task Get_RedisThrows_Returns503WithTheError()
     {
         var cache = new Mock<IDistributedCache>();

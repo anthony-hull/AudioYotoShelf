@@ -18,14 +18,6 @@ public class HealthChecksTests
         new(new DbContextOptionsBuilder<AudioYotoShelfDbContext>()
             .UseInMemoryDatabase($"HealthChecks_{Guid.NewGuid()}").Options);
 
-    /// <summary>
-    /// A real Npgsql context aimed at a closed loopback port. EF's CanConnectAsync answers false (it does
-    /// not throw) when the server is unreachable, which an in-memory provider can never do.
-    /// </summary>
-    private static AudioYotoShelfDbContext UnreachablePostgres() =>
-        new(new DbContextOptionsBuilder<AudioYotoShelfDbContext>()
-            .UseNpgsql("Host=127.0.0.1;Port=1;Database=x;Username=x;Password=x;Timeout=2;Pooling=false").Options);
-
     private static Mock<IDistributedCache> CacheReturning(string? stored)
     {
         var cache = new Mock<IDistributedCache>();
@@ -52,7 +44,7 @@ public class HealthChecksTests
     [Fact]
     public async Task Postgres_ConnectAnswersFalse_IsUnhealthyWithoutAnException()
     {
-        using var db = UnreachablePostgres();
+        using var db = TestDatabases.UnreachablePostgres();
 
         var result = await new PostgresHealthCheck(db).CheckHealthAsync(Context);
 
