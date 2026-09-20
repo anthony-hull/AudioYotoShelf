@@ -9,11 +9,16 @@
     "configuration": "Release",
     "mutation-level": "Standard",
     "coverage-analysis": "perTest",
-    "reporters": ["progress", "html", "json", "markdown"],
+    "reporters": [
+      "progress",
+      "html",
+      "json",
+      "markdown"
+    ],
     "thresholds": {
-      "high": 95,
-      "low": 90,
-      "break": 90
+      "high": 97,
+      "low": 94,
+      "break": 94
     },
     "ignore-methods": [
       "Log",
@@ -30,7 +35,8 @@
       "!**/Program.cs",
       "!**/Data/Configurations/**",
       "!**/Data/AudioYotoShelfDbContext.cs",
-      "!**/Observability/**"
+      "!**/Observability/**",
+      "!**/SystemProcessRunner.cs"
     ]
   }
 }

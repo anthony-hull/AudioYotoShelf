@@ -10,5 +10,5 @@ excluded, what Stryker cannot mutate, and what only looks like a gap (integratio
 mutants, generated code), so those are not re-investigated.
 
 - Core gate: `dotnet stryker --config-file stryker-config.core.json` (~1 min, must stay >= 95%).
-- Whole solution: `dotnet stryker` (~3 min, floor 90%). Read results with `python3 scripts/mutation-summary.py --survivors`, not the console table.
+- Whole solution: `dotnet stryker` (~3 min, floor 94%). Read results with `python3 scripts/mutation-summary.py --survivors`, not the console table.
 - Never lower a `break` threshold or delete an exclusion glob without a `DECISIONS.md` entry.

@@ -35,14 +35,15 @@ Reports land in `StrykerOutput/` (git-ignored): `reports/mutation-report.html` f
 | Config | Scope | Break below | Baseline (2026-09-20) | Why |
 |---|---|---|---|---|
 | `stryker-config.core.json` | `AudioYotoShelf.Core` | **95%** | 99.58% | Pure logic (card limits, track planning, age suggestion, token validity). Unit tests are the right instrument here, so the bar is high. |
-| `stryker-config.json` | whole solution, unit tests only | **90%** | 94.56% | A floor against decay. Most of `Infrastructure` and `Api` is reached only by integration tests (see below), so a high bar would be false precision. |
+| `stryker-config.json` | whole solution, unit tests only | **94%** | 96.90% | A floor against decay everywhere else. Startup wiring and EF mappings are excluded (§1) because only the integration suite can judge them. |
 
 **Ratchet, never loosen.** When a change raises a score, raise `break` to just under the new score in the same
 PR. Lowering `break` needs a written reason in `DECISIONS.md`.
 
 History of the whole-solution score (unit tests only): 32.13% when this was set up (Core 67.57%, 272 tests),
 37.80% once declarative wiring was excluded and Core was tested, 63.93% after the Api/Infrastructure helper tests,
-**94.56%** after the large clients and orchestrators were tested (971 tests).
+94.56% after the large clients and orchestrators were tested, and **96.90%** once ffmpeg was put behind a
+process seam (1,013 tests).
 
 ## Do not mutation-test this
 
@@ -58,6 +59,7 @@ coverage", and do not write tests to kill mutants in them.
 | `!**/Data/Configurations/**` | EF entity mappings. All 69 mutants survived because nothing but a real database can check them, and the integration suite applies the migrations. |
 | `!**/Data/AudioYotoShelfDbContext.cs` | Same: model wiring, exercised by migrations and integration tests. |
 | `!**/Observability/**` | Metric instrument registration. Nothing to assert on beyond "the endpoint exists". |
+| `!**/SystemProcessRunner.cs` | The thin wrapper that launches a real `ffmpeg`. Everything above it is tested through the `IProcessRunner` seam; only a real process reaches this class, and no unit test should spawn one. |
 
 If you add a file of the same kind (another EF configuration, another registration class), add its glob and a
 row here in the same commit.
@@ -124,18 +126,14 @@ Known equivalents (all commented in source, except the last):
 
 ### 6. Not covered yet
 
-- **`FfmpegChapterExtractor`** (29%, 44 of the 89 remaining undetected mutants). `RunFfmpegAsync` and
-  `IsFfmpegAvailableAsync` build a `Process` for a hard-coded `"ffmpeg"` with no injection point, and the segment
-  discovery in `SplitAsync` needs a real successful split. Reaching them needs an `IProcessRunner` seam, which is a
-  design decision, not a test to write. Do not spawn real ffmpeg from a unit test to get around it.
-- **The Vue front end** (`src/AudioYotoShelf.ClientApp`) has no mutation testing. StrykerJS with the Vitest runner
-  is the tool if it is wanted; it is a separate decision, not a gap in this setup.
+- Nothing else is known to be unreachable. `FfmpegChapterExtractor` used to be (its `Process` was hard-coded); it now runs
+  through `IProcessRunner`, so its arguments, segment discovery and error mapping are tested with a fake runner. Do not
+  spawn a real `ffmpeg` from a unit test.
 
-## Where the remaining survivors are (2026-09-20, 89 undetected of ~1,640)
+## Where the remaining survivors are (2026-09-20, 50 undetected of ~1,660)
 
-- **`FfmpegChapterExtractor`, 44:** needs a process seam (§6).
-- **Fixed message text, 54 of the 89 are `String` mutants** (`Unauthorized("...")`, progress labels,
-  `HealthCheckResult` descriptions). Not worth killing (§5).
+- **Fixed message text: 39 of the 50 are `String` mutants** (`Unauthorized("...")`, progress labels,
+  `HealthCheckResult` descriptions, ffmpeg exception text). Not worth killing (§5).
 - **Clock-boundary equivalents** (§4).
 
 Everything else is at or near 100%. If the score drops, run `python3 scripts/mutation-summary.py --survivors` and
@@ -146,7 +144,7 @@ look at what is new, not at this list.
 | Run | Mutants tested | Time |
 |---|---|---|
 | Core only | ~240 | 40-60 s |
-| Whole solution | ~1,640 | ~3-3.5 min |
+| Whole solution | ~1,660 | ~3.5-4 min |
 
 Three Stryker runs at once (`--concurrency 5` each) roughly doubled every time, so parallel work needs a separate
 git worktree per run: two runs in one tree fight over `obj/`.

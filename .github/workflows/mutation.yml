@@ -57,7 +57,7 @@ jobs:
           if-no-files-found: ignore
 
   whole-solution:
-    name: Mutation floor (whole solution, >= 90%)
+    name: Mutation floor (whole solution, >= 94%)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
