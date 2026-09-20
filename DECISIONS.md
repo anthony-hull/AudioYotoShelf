@@ -5,7 +5,7 @@ Architectural decisions and hard-won constraints for the homelab fork. Grep this
 ## 2026-09-20 — Mutation testing with Stryker.NET, two gates, unit tests only
 
 **Decision.** Stryker.NET 4.14.0 (pinned in `dotnet-tools.json`). Two configs: a strict gate on `AudioYotoShelf.Core`
-(`stryker-config.core.json`, break 95%) and a whole-solution floor (`stryker-config.json`, break 35%).
+(`stryker-config.core.json`, break 95%) and a whole-solution floor (`stryker-config.json`, break 60%).
 
 **Why two.** One whole-solution number is dominated by `Infrastructure`/`Api` code that only the integration suite
 reaches, so a bar high enough to protect Core would fail permanently and one low enough to pass would protect

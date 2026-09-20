@@ -13,7 +13,7 @@
     "thresholds": {
       "high": 80,
       "low": 60,
-      "break": 35
+      "break": 60
     },
     "ignore-methods": [
       "Log",

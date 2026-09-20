@@ -35,7 +35,7 @@ Reports land in `StrykerOutput/` (git-ignored): `reports/mutation-report.html` f
 | Config | Scope | Break below | Baseline (2026-09-20) | Why |
 |---|---|---|---|---|
 | `stryker-config.core.json` | `AudioYotoShelf.Core` | **95%** | 99.58% | Pure logic (card limits, track planning, age suggestion, token validity). Unit tests are the right instrument here, so the bar is high. |
-| `stryker-config.json` | whole solution, unit tests only | **35%** | 37.80% | A floor against decay. Most of `Infrastructure` and `Api` is reached only by integration tests (see below), so a high bar would be false precision. |
+| `stryker-config.json` | whole solution, unit tests only | **60%** | 63.93% | A floor against decay. Most of `Infrastructure` and `Api` is reached only by integration tests (see below), so a high bar would be false precision. |
 
 **Ratchet, never loosen.** When a change raises a score, raise `break` to just under the new score in the same
 PR. Lowering `break` needs a written reason in `DECISIONS.md`.
