@@ -267,6 +267,12 @@ public class ValidatorTests
         _seriesValidator.TestValidate(new CreateSeriesTransferRequest("ser-1", "lib-1", OverrideMinAge: min, OverrideMaxAge: max))
             .IsValid.Should().Be(isValid);
 
+    [Theory]
+    [MemberData(nameof(AgeRangeCases))]
+    public void Series_AgeRange_IsValidOnlyWhenInBoundsAndMinBelowMax(int? min, int? max, bool isValid) =>
+        _seriesValidator.TestValidate(new CreateSeriesTransferRequest("ser-1", "lib-1", OverrideMinAge: min, OverrideMaxAge: max))
+            .IsValid.Should().Be(isValid);
+
     [Fact]
     public void Transfer_OutOfRangeMax_IsReportedAgainstMax() =>
         _transferValidator.TestValidate(new CreateTransferRequest("item-1", OverrideMaxAge: 25))
