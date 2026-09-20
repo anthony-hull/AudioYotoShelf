@@ -11,9 +11,9 @@
     "coverage-analysis": "perTest",
     "reporters": ["progress", "html", "json", "markdown"],
     "thresholds": {
-      "high": 80,
-      "low": 60,
-      "break": 60
+      "high": 95,
+      "low": 90,
+      "break": 90
     },
     "ignore-methods": [
       "Log",

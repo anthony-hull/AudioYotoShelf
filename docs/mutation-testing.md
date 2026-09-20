@@ -35,12 +35,14 @@ Reports land in `StrykerOutput/` (git-ignored): `reports/mutation-report.html` f
 | Config | Scope | Break below | Baseline (2026-09-20) | Why |
 |---|---|---|---|---|
 | `stryker-config.core.json` | `AudioYotoShelf.Core` | **95%** | 99.58% | Pure logic (card limits, track planning, age suggestion, token validity). Unit tests are the right instrument here, so the bar is high. |
-| `stryker-config.json` | whole solution, unit tests only | **60%** | 63.93% | A floor against decay. Most of `Infrastructure` and `Api` is reached only by integration tests (see below), so a high bar would be false precision. |
+| `stryker-config.json` | whole solution, unit tests only | **90%** | 94.56% | A floor against decay. Most of `Infrastructure` and `Api` is reached only by integration tests (see below), so a high bar would be false precision. |
 
 **Ratchet, never loosen.** When a change raises a score, raise `break` to just under the new score in the same
 PR. Lowering `break` needs a written reason in `DECISIONS.md`.
 
-The whole-solution baseline before the Core tests were added was 32.13% (Core 67.57%).
+History of the whole-solution score (unit tests only): 32.13% when this was set up (Core 67.57%, 272 tests),
+37.80% once declarative wiring was excluded and Core was tested, 63.93% after the Api/Infrastructure helper tests,
+**94.56%** after the large clients and orchestrators were tested (971 tests).
 
 ## Do not mutation-test this
 
@@ -71,20 +73,17 @@ They are **not** mutation-tested at all, and no test change will alter that. The
 ordinary unit tests and review. Do not hunt for survivors there; there are none to find. (The run logs
 `Safe Mode! Stryker will remove all mutations in <method>`; check that list after upgrading Stryker, it may shrink.)
 
-### 3. `NoCoverage` in code that only integration tests reach
+### 3. Code only the integration suite can reach
 
 Stryker here runs the three **unit** test projects. The Testcontainers suite (`IntegrationTests`) is deliberately
-left out, so anything only it exercises reports `NoCoverage` or `Survived` even though a test does check it.
+left out. Anything only it exercises reports `NoCoverage` or `Survived` even though a test checks it. What is left
+in that state is small, because the controllers, hub, clients and orchestrators are now unit-tested with mocks; the
+model wiring and startup pipeline (§1) are what remain.
 
-- Measured example: `AuthController.cs:141` (`requested is null || ...`, the server-URL lock) survives the unit-only
-  run, and is checked by `ApiKeyConnect_WithConfiguredServer_ConnectsToThatServer`.
 - Why the integration suite is not fed to Stryker: it starts real Postgres and Redis containers, and Stryker
   restarts the test process for many mutants, in parallel. That is expected to cost far more than it returns.
-  **This was reasoned, not measured.** If you want to disprove it, time one integration run under
-  `--concurrency 1` first.
-
-So a low score on `AuthController`, `TransfersController`, `YotoService` or `TransferOrchestrator` is a statement
-about unit-test depth, not proof of an untested behaviour. Check the integration tests before writing a duplicate.
+  **This was reasoned, not measured.** To disprove it, time one integration run under `--concurrency 1` first.
+- Before writing a test for a survivor in a startup or mapping path, check `AuthIntegrationTests` first.
 
 ### 4. Equivalent mutants (cannot be killed by any test)
 
@@ -103,10 +102,17 @@ Known equivalents (all commented in source, except the last):
 
 - `AgeSuggestionService`: `First()` on a list that always holds the duration signal; the `Math.Clamp` lower bound
   (every rule is at least 3 years wide, so it never binds); the `?? ""` fallback text (only has to be keyword-free).
-- `UserConnection.HasValidYotoConnection`: the `>` against the live clock.
-- **`UserConnection.HasValidAbsConnection` (line 60): left unannotated on purpose.** It is the same clock
-  comparison, but a `disable Equality` on that property would also hide the killable `is null` mutant in it. It is
-  the single remaining Core survivor.
+- `UserConnection.HasValidYotoConnection`, `YotoTokens` (line 20): the `>` against the live clock.
+- `YotoService`: three `if`s that only gate a log line (`cardId is null`, `attempt == 0`, `attempt % 10 == 0`).
+- `TransferOrchestrator` / `PlaylistTransferOrchestrator`: catch blocks that only log and return `null`
+  (`Stryker disable once Block`), and a `Statement` mutation where the guard only avoids a logged warning.
+- `TransfersController`: the explicit `TrackMappings.RemoveRange(...)` is redundant with the FK cascade in
+  `EntityConfigurations.cs`; annotated rather than deleted so the code does not silently depend on that mapping.
+- **Left unannotated on purpose**, because a `disable Equality` on the statement would also hide a killable mutant
+  beside it: `UserConnection.HasValidAbsConnection` (line 60, the single remaining Core survivor),
+  `AbsTokens.cs:57`, `CardsController.cs:162`, and the `now - 7d` / `now - 30d` window comparisons in
+  `AdminController` (lines 30, 31, 34, 35, 40). The clean fix for the window ones is injecting `TimeProvider`,
+  a source change nobody has asked for.
 
 ### 5. Noise that is not worth killing
 
@@ -118,23 +124,32 @@ Known equivalents (all commented in source, except the last):
 
 ### 6. Not covered yet
 
+- **`FfmpegChapterExtractor`** (29%, 44 of the 89 remaining undetected mutants). `RunFfmpegAsync` and
+  `IsFfmpegAvailableAsync` build a `Process` for a hard-coded `"ffmpeg"` with no injection point, and the segment
+  discovery in `SplitAsync` needs a real successful split. Reaching them needs an `IProcessRunner` seam, which is a
+  design decision, not a test to write. Do not spawn real ffmpeg from a unit test to get around it.
 - **The Vue front end** (`src/AudioYotoShelf.ClientApp`) has no mutation testing. StrykerJS with the Vitest runner
   is the tool if it is wanted; it is a separate decision, not a gap in this setup.
 
-## Choosing where to spend effort
+## Where the remaining survivors are (2026-09-20, 89 undetected of ~1,640)
 
-Highest return first: **Core**, then pure helpers in `Api`/`Infrastructure` that already have unit tests
-(`Validators.cs` 64.9%, `AbsTokens.cs` 80%, `PlaylistCapacity.cs` 20%), then the rest. Measured on 2026-09-20,
-survivors worth a look in `Api`: the ownership filters `t.UserConnectionId != ...` in `TransfersController`
-(lines 29, 73), `CardsController` (46) and `LibrariesController` (119). A test that fails when the filter flips
-is what proves one user cannot see another's transfers.
+- **`FfmpegChapterExtractor`, 44:** needs a process seam (§6).
+- **Fixed message text, 54 of the 89 are `String` mutants** (`Unauthorized("...")`, progress labels,
+  `HealthCheckResult` descriptions). Not worth killing (§5).
+- **Clock-boundary equivalents** (§4).
+
+Everything else is at or near 100%. If the score drops, run `python3 scripts/mutation-summary.py --survivors` and
+look at what is new, not at this list.
 
 ## Runtime facts (one machine, 20 cores, 2026-09-20)
 
 | Run | Mutants tested | Time |
 |---|---|---|
 | Core only | ~240 | 40-60 s |
-| Whole solution | ~1,030 | 147-211 s |
+| Whole solution | ~1,640 | ~3-3.5 min |
+
+Three Stryker runs at once (`--concurrency 5` each) roughly doubled every time, so parallel work needs a separate
+git worktree per run: two runs in one tree fight over `obj/`.
 
 GitHub-hosted runners have 4 cores, so expect roughly 4-5x longer in CI (an estimate from core count, not measured).
 Run Stryker against a **green** suite only: a test that already fails proves nothing about a mutant.
