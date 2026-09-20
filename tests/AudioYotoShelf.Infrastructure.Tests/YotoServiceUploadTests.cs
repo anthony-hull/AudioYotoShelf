@@ -79,6 +79,28 @@ public class YotoServiceUploadTests
         url.Should().Contain("client_id=client-123");
     }
 
+    [Theory]
+    [InlineData("openid")]
+    [InlineData("profile")]
+    [InlineData("offline_access")]
+    [InlineData("user:content:manage")] // upload audio, create/update/delete cards
+    [InlineData("user:content:view")]   // list the person's own cards
+    [InlineData("user:icons:manage")]   // upload custom icons
+    public void GetAuthorizationUrl_AsksYotoForTheScopeTheAppUses(string expectedScope)
+    {
+        // Yoto grants only a default (user:account:view) to a client that does not ask, and then
+        // refuses the upload with "User does not have required scope(s): 'user:content:manage'".
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Yoto:ClientId"] = "client-123" })
+            .Build();
+        var sut = new YotoService(Mock.Of<IHttpClientFactory>(), config, Mock.Of<ILogger<YotoService>>());
+
+        var url = sut.GetAuthorizationUrl("http://app/callback", "state-1");
+
+        var scopes = System.Web.HttpUtility.ParseQueryString(new Uri(url).Query)["scope"]!.Split(' ');
+        scopes.Should().Contain(expectedScope);
+    }
+
     private static TestableYotoService CreateSut(HttpMessageHandler handler)
     {
         var factory = new Mock<IHttpClientFactory>();
