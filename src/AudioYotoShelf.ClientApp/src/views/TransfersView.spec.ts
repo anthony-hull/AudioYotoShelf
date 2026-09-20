@@ -7,15 +7,21 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import type { TransferProgressUpdate, TransferResponse, TransferStatus } from '@/types'
 import TransfersView from '@/views/TransfersView.vue'
 
-const signalR = vi.hoisted(() => ({ progressUpdates: null as never, listChangedAt: null as never }))
+const signalR = vi.hoisted(() => ({
+  progressUpdates: null as never,
+  trackStates: null as never,
+  listChangedAt: null as never,
+}))
 
 vi.mock('@/composables/useSignalR', async () => {
   const { ref } = await import('vue')
   signalR.progressUpdates = ref(new Map()) as never
+  signalR.trackStates = ref({}) as never
   signalR.listChangedAt = ref(0) as never
   return {
     useSignalR: () => ({
       progressUpdates: signalR.progressUpdates,
+      trackStates: signalR.trackStates,
       listChangedAt: signalR.listChangedAt,
       connect: vi.fn(() => Promise.resolve()),
       joinTransfer: vi.fn(() => Promise.resolve()),
@@ -129,10 +135,38 @@ describe('TransfersView', () => {
     expect(wrapper.find('[data-test="transfer-step"]').text()).toBe('Uploading track 3/17…')
   })
 
-  it('says how many tracks are on Yoto before any live update has arrived, e.g. after a page reload', async () => {
+  it('shows no step line until the server has said something', async () => {
+    const wrapper = await mountWith(transfer('UploadingToYoto'))
+
+    expect(wrapper.find('[data-test="transfer-step"]').exists()).toBe(false)
+  })
+
+  it('says how many tracks are on Yoto, and opens to show each one', async () => {
     const wrapper = await mountWith(transfer('UploadingToYoto', 1, 3))
 
-    expect(wrapper.find('[data-test="transfer-step"]').text()).toBe('1 of 3 tracks on Yoto')
+    expect(wrapper.find('[data-test="tracks-toggle"]').text()).toContain('1 of 3 tracks on Yoto')
+    await wrapper.find('[data-test="tracks-toggle"]').trigger('click')
+    expect(wrapper.findAll('[data-test="track-row"]')).toHaveLength(3)
+  })
+
+  it('shows what Yoto is doing with a track as soon as the server says it, without a reload', async () => {
+    const wrapper = await mountWith(transfer('UploadingToYoto', 1, 3))
+    await wrapper.find('[data-test="tracks-toggle"]').trigger('click')
+
+    const states = signalR.trackStates as unknown as ReturnType<typeof ref<Record<string, unknown>>>
+    states.value = { [TRANSFER_ID]: { 'track-1': { phase: 'Transcoding', percent: 55 } } }
+    await flushPromises()
+
+    const second = wrapper.findAll('[data-test="track-row"]')[1]
+    expect(second.text()).toContain('Yoto is processing')
+    expect(second.text()).toContain('55%')
+  })
+
+  it("still shows a failed transfer's tracks, so you can see where it stopped", async () => {
+    const wrapper = await mountWith(transfer('Failed', 1, 3))
+    await wrapper.find('[data-test="tracks-toggle"]').trigger('click')
+
+    expect(wrapper.findAll('[data-test="track-row"]')[1].text()).toContain('Stopped here')
   })
 
   it('shows no step line for a transfer that is not running', async () => {

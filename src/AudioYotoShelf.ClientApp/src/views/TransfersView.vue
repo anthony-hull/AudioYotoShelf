@@ -4,11 +4,12 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useSignalR } from '@/composables/useSignalR'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
+import TransferTracks from '@/components/transfers/TransferTracks.vue'
 import { transferApi } from '@/services/api'
 import type { TransferResponse, TransferStatus } from '@/types'
 
 const connectionStore = useConnectionStore()
-const { progressUpdates, joinTransfer, connect, listChangedAt } = useSignalR()
+const { progressUpdates, trackStates, joinTransfer, connect, listChangedAt } = useSignalR()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -211,15 +212,6 @@ function statusLabel(status: TransferStatus): string {
   return map[status] ?? status
 }
 
-// The live step when the server has sent one; otherwise, after a page reload, how far along the
-// tracks are as of the last time the list was loaded.
-function stepText(transfer: TransferResponse): string {
-  const live = liveStep.value[transfer.id]
-  if (live) return live
-  const uploaded = transfer.tracks.filter((track) => track.isUploaded).length
-  return `${uploaded} of ${transfer.tracks.length} tracks on Yoto`
-}
-
 function timeSinceUpdate(transferId: string): string | null {
   const t = lastUpdateTime.value[transferId]
   if (!t) return null
@@ -347,8 +339,12 @@ function formatDate(iso: string): string {
               :style="{ width: `${transfer.progressPercent}%` }"
             />
           </div>
-          <p data-test="transfer-step" class="mt-1 text-xs text-gray-600 break-words">
-            {{ stepText(transfer) }}
+          <p
+            v-if="liveStep[transfer.id]"
+            data-test="transfer-step"
+            class="mt-1 text-xs text-gray-600 break-words"
+          >
+            {{ liveStep[transfer.id] }}
           </p>
           <div class="flex items-center justify-between mt-1">
             <p class="text-xs text-gray-400">{{ transfer.progressPercent }}%</p>
@@ -357,6 +353,14 @@ function formatDate(iso: string): string {
             </p>
           </div>
         </div>
+
+        <!-- Each track's own state: open it to see which are done, which Yoto is processing, which wait -->
+        <TransferTracks
+          :status="transfer.status"
+          :tracks="transfer.tracks"
+          :live="trackStates[transfer.id] ?? {}"
+          class="mt-1"
+        />
 
         <!-- Error message -->
         <p v-if="transfer.errorMessage" class="mt-2 text-sm text-red-600 bg-red-50 rounded p-2">
