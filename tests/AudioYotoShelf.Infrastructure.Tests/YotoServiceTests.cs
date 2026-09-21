@@ -44,7 +44,8 @@ public class YotoServiceTests
         query["response_type"].Should().Be("code");
         query["client_id"].Should().Be("client-1");
         query["redirect_uri"].Should().Be("https://app.example/callback");
-        query["scope"].Should().Be("profile offline_access openid");
+        query["scope"].Should().Be(
+            "profile offline_access openid user:content:manage user:content:view user:icons:manage");
         query["audience"].Should().Be(ApiBase);
         query["state"].Should().Be("state-1");
     }
