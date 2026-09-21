@@ -54,12 +54,18 @@ public class TransferCancellationTests : IDisposable
         db.UserConnections.Add(user);
         var transfer = new CardTransfer
         {
-            UserConnectionId = user.Id, AbsLibraryItemId = "item-1", BookTitle = "Book", AgeSuggestionReason = "n/a",
+            UserConnectionId = user.Id,
+            AbsLibraryItemId = "item-1",
+            BookTitle = "Book",
+            AgeSuggestionReason = "n/a",
         };
         db.CardTransfers.Add(transfer);
         var tracks = Enumerable.Range(0, trackCount).Select(i => new TrackMapping
         {
-            CardTransferId = transfer.Id, AbsFileIno = $"ino-{i}", ChapterTitle = $"Chapter {i + 1}", ChapterIndex = i,
+            CardTransferId = transfer.Id,
+            AbsFileIno = $"ino-{i}",
+            ChapterTitle = $"Chapter {i + 1}",
+            ChapterIndex = i,
         }).ToList();
         db.TrackMappings.AddRange(tracks);
         await db.SaveChangesAsync();
