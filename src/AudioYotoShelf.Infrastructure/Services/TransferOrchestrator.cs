@@ -90,6 +90,7 @@ public class TransferOrchestrator(
 
         await db.SaveChangesAsync(ct);
 
+        IEnumerable<string> extractedChapterFiles = [];
         try
         {
             var item = await absService.GetLibraryItemAsync(
@@ -113,6 +114,7 @@ public class TransferOrchestrator(
 
             await UpdateStatus(transfer, TransferStatus.DownloadingAudio, 5, ct);
             var (trackMappings, chapterPaths) = await BuildTrackMappingsAsync(user, item, transfer, ct);
+            extractedChapterFiles = chapterPaths.Values;
 
             await UpdateStatus(transfer, TransferStatus.UploadingToYoto, 20, ct);
             var yotoAccessToken = await EnsureYotoTokenAsync(user, ct);
@@ -170,6 +172,7 @@ public class TransferOrchestrator(
         finally
         {
             CleanupTempFiles(transfer.Id);
+            DeleteFiles(extractedChapterFiles);
         }
     }
 
@@ -290,12 +293,33 @@ public class TransferOrchestrator(
     // Private pipeline methods
     // =========================================================================
 
+    /// <summary>
+    /// Builds the tracks for a transfer. Extracted chapter files are named by ffmpeg, not by the transfer,
+    /// so <see cref="CleanupTempFiles"/> cannot find them: they are deleted here if building fails, and by
+    /// the caller once the transfer ends.
+    /// </summary>
     internal async Task<(List<TrackMapping> Mappings, Dictionary<int, string> ChapterPaths)> BuildTrackMappingsAsync(
         UserConnection user, AbsLibraryItem item, CardTransfer transfer, CancellationToken ct)
     {
+        var chapterPaths = new Dictionary<int, string>();
+        try
+        {
+            var mappings = await CreateTrackMappingsAsync(user, item, transfer, chapterPaths, ct);
+            return (mappings, chapterPaths);
+        }
+        catch
+        {
+            DeleteFiles(chapterPaths.Values);
+            throw;
+        }
+    }
+
+    private async Task<List<TrackMapping>> CreateTrackMappingsAsync(
+        UserConnection user, AbsLibraryItem item, CardTransfer transfer,
+        Dictionary<int, string> chapterPaths, CancellationToken ct)
+    {
         var media = item.Media!;
         var mappings = new List<TrackMapping>();
-        var chapterPaths = new Dictionary<int, string>();
 
         if (media.AudioFiles.Length == 0)
             throw new InvalidOperationException("Item has no audio files to transfer");
@@ -375,7 +399,7 @@ public class TransferOrchestrator(
         }
 
         await db.SaveChangesAsync(ct);
-        return (mappings, chapterPaths);
+        return mappings;
     }
 
     internal async Task UploadTracksAsync(
@@ -740,6 +764,21 @@ public class TransferOrchestrator(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to clean up temp files for transfer {TransferId}", transferId);
+        }
+    }
+
+    private void DeleteFiles(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to delete temp file {File}", path);
+            }
         }
     }
 

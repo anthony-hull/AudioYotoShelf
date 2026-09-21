@@ -2,6 +2,24 @@
 
 Architectural decisions and hard-won constraints for the homelab fork. Grep this before touching an area.
 
+## 2026-09-21 — A single-file book's chapter files are deleted when its transfer ends
+
+**Decision.** `TransferBookAsync` deletes the chapter files it extracted in its `finally`, whether the transfer completed,
+failed or was cancelled. `BuildTrackMappingsAsync` deletes the ones already extracted if it fails part-way, because it
+never returns their paths to the caller.
+
+**Why (measured live, 2026-09-21).** After cancelling a 9-chapter single-file book on `pablo`, `/app/temp` still held nine
+`chapter_<guid>.m4a` files (70 MB). The transfer's own clean-up removes only files named `<transferId>*`, and
+`FfmpegChapterExtractor` names its output `chapter_<guid>`, so those files were never matched. The only `File.Delete` calls
+in `homelab-4` were the ones for the ffmpeg concat list, the playlist orchestrator and that glob, so a completed single-file
+book leaked the same way. That is read from the code; only the cancelled case was observed running.
+
+**What it does not cover.** Files from `TransferPlaylistAsync` (its own clean-up, not looked at here) and any file left by
+a process killed mid-transfer: the container losing power still leaves the volume as it was.
+
+**Test note.** The shared orchestrator test fixture used to hand every chapter of every transfer the same temp file. It now
+creates one per call, as ffmpeg does; with real clean-up in place a second transfer in the same test found the file gone.
+
 ## 2026-09-20 — Cancelling a transfer stops it between tracks, and is not a failure
 
 **Decision.** The per-track loop looks for a cancel before each track, and a person's cancel ends the Hangfire job
