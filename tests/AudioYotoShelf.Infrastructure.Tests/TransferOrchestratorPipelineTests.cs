@@ -199,8 +199,13 @@ public partial class TransferOrchestratorTests
 
         // 20 + trunc((i + p/100) / 2 * 50): track 1 -> 27 (p=30), 35 (p=60); track 2 -> 57 (p=50), 70 (p=100).
         seenProgress.Should().Equal(27, 35, 57, 70);
+        // Each track is now followed from download to done, and Yoto's own percentage rides along
+        // once it is transcoding (60 is the moment the transcode starts, so track 1 has none yet).
         updates.Select(u => u.CurrentStep).Should().Equal(
-            "Uploading track 1/2…", "Transcoding track 1/2 on Yoto…", "Uploading track 2/2…", "Transcoding track 2/2 on Yoto…");
+            "Downloading track 1/2 from Audiobookshelf…", "Uploading track 1/2…", "Transcoding track 1/2 on Yoto…",
+            "Track 1/2 is on Yoto",
+            "Downloading track 2/2 from Audiobookshelf…", "Uploading track 2/2…", "Transcoding track 2/2 on Yoto… 100%",
+            "Track 2/2 is on Yoto");
     }
 
     [Fact]

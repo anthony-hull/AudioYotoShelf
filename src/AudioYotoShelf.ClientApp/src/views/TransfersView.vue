@@ -4,11 +4,12 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useSignalR } from '@/composables/useSignalR'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
+import TransferTracks from '@/components/transfers/TransferTracks.vue'
 import { transferApi } from '@/services/api'
 import type { TransferResponse, TransferStatus } from '@/types'
 
 const connectionStore = useConnectionStore()
-const { progressUpdates, joinTransfer, connect, listChangedAt } = useSignalR()
+const { progressUpdates, trackStates, joinTransfer, connect, listChangedAt } = useSignalR()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -20,6 +21,8 @@ const filterStatus = ref<TransferStatus | ''>('')
 
 // Track last SignalR update time per transfer for the activity indicator
 const lastUpdateTime = ref<Record<string, number>>({})
+// What the server last said it is doing per transfer, e.g. "Transcoding track 2/17 on Yoto… 55%".
+const liveStep = ref<Record<string, string | null>>({})
 const now = ref(Date.now())
 let nowTimer: ReturnType<typeof setInterval>
 
@@ -48,6 +51,7 @@ watch(
         transfer.status = update.status
         transfer.progressPercent = update.progressPercent
         transfer.errorMessage = update.errorMessage
+        liveStep.value[id] = update.currentStep
         lastUpdateTime.value[id] = Date.now()
         now.value = Date.now()
       }
@@ -196,7 +200,8 @@ function statusLabel(status: TransferStatus): string {
   const map: Record<TransferStatus, string> = {
     Pending: 'Pending',
     DownloadingAudio: 'Downloading',
-    UploadingToYoto: 'Uploading',
+    // Sending each file takes seconds; the minutes are Yoto transcoding it, so say both.
+    UploadingToYoto: 'Uploading & transcoding',
     AwaitingTranscode: 'Transcoding',
     GeneratingIcons: 'Generating Icons',
     CreatingCard: 'Creating Card',
@@ -254,7 +259,7 @@ function formatDate(iso: string): string {
           <option value="">All Statuses</option>
           <option value="Pending">Pending</option>
           <option value="DownloadingAudio">Downloading</option>
-          <option value="UploadingToYoto">Uploading</option>
+          <option value="UploadingToYoto">Uploading &amp; transcoding</option>
           <option value="AwaitingTranscode">Transcoding</option>
           <option value="Completed">Completed</option>
           <option value="Failed">Failed</option>
@@ -334,6 +339,13 @@ function formatDate(iso: string): string {
               :style="{ width: `${transfer.progressPercent}%` }"
             />
           </div>
+          <p
+            v-if="liveStep[transfer.id]"
+            data-test="transfer-step"
+            class="mt-1 text-xs text-gray-600 break-words"
+          >
+            {{ liveStep[transfer.id] }}
+          </p>
           <div class="flex items-center justify-between mt-1">
             <p class="text-xs text-gray-400">{{ transfer.progressPercent }}%</p>
             <p v-if="timeSinceUpdate(transfer.id)" class="text-xs text-gray-400">
@@ -341,6 +353,14 @@ function formatDate(iso: string): string {
             </p>
           </div>
         </div>
+
+        <!-- Each track's own state: open it to see which are done, which Yoto is processing, which wait -->
+        <TransferTracks
+          :status="transfer.status"
+          :tracks="transfer.tracks"
+          :live="trackStates[transfer.id] ?? {}"
+          class="mt-1"
+        />
 
         <!-- Error message -->
         <p v-if="transfer.errorMessage" class="mt-2 text-sm text-red-600 bg-red-50 rounded p-2">

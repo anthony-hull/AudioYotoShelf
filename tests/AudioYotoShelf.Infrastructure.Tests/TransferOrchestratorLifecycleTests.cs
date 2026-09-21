@@ -65,7 +65,9 @@ public partial class TransferOrchestratorTests
 
         await _sut.TransferBookAsync(user.Id, TestData.CreateTransferRequest());
 
-        updates.Select(u => (u.Status, u.ProgressPercent, u.CurrentStep)).Should().Equal(
+        // The stages of the transfer as a whole; updates about individual tracks (TrackId set) are a
+        // separate stream, covered by TransferTrackStateTests.
+        updates.Where(u => u.TrackId is null).Select(u => (u.Status, u.ProgressPercent, u.CurrentStep)).Should().Equal(
             (TransferStatus.DownloadingAudio, 5, "Downloading audio"),
             (TransferStatus.UploadingToYoto, 20, "Uploading & transcoding on Yoto"),
             (TransferStatus.GeneratingIcons, 70, "Generating chapter icons"),

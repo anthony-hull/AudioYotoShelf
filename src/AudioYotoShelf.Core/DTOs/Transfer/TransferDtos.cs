@@ -85,12 +85,18 @@ public record TrackMappingResponse(
 
 // --- Progress ---
 
+/// <param name="TrackId">The track this update is about, when it is about one; null for the transfer as a whole.</param>
+/// <param name="TrackPhase">Which stage that track is at.</param>
+/// <param name="TrackPercent">How far Yoto's transcode of that track has got, 0-100, while it is transcoding.</param>
 public record TransferProgressUpdate(
     Guid TransferId,
     TransferStatus Status,
     int ProgressPercent,
     string? CurrentStep,
-    string? ErrorMessage
+    string? ErrorMessage,
+    Guid? TrackId = null,
+    TrackPhase? TrackPhase = null,
+    int? TrackPercent = null
 );
 
 // --- Age Suggestion ---

@@ -13,10 +13,12 @@ public class AudiobookshelfServiceTests
 {
     private readonly AudiobookshelfService _sut;
     private readonly FakeHttpMessageHandler _handler;
+    private readonly FakeHttpMessageHandler _ssoHandler;
 
     public AudiobookshelfServiceTests()
     {
         _handler = new FakeHttpMessageHandler();
+        _ssoHandler = new FakeHttpMessageHandler();
 
         var factory = new Mock<IHttpClientFactory>();
         factory.Setup(f => f.CreateClient("Audiobookshelf"))
@@ -26,6 +28,11 @@ public class AudiobookshelfServiceTests
                 client.DefaultRequestHeaders.Add("Accept", "application/json");
                 return client;
             });
+
+        // The SSO calls need a client that does not follow redirects, so they use their own named
+        // client. Routing them to a separate handler here proves the service asks for it.
+        factory.Setup(f => f.CreateClient("AudiobookshelfSso"))
+            .Returns(() => new HttpClient(_ssoHandler));
 
         _sut = new AudiobookshelfService(factory.Object, Mock.Of<ILogger<AudiobookshelfService>>());
     }
@@ -744,11 +751,252 @@ public class AudiobookshelfServiceTests
     /// <summary>
     /// Minimal HTTP handler that captures the last request and returns a canned response.
     /// </summary>
+    // =========================================================================
+    // StartSsoAsync — step 1 of the OIDC API flow: get ABS's authorization URL and session
+    // =========================================================================
+
+    private const string AbsAuthorizeLocation =
+        "https://auth.example/application/o/authorize/?client_id=abc&state=s";
+    private const string OurCallback = "https://yoto.example/api/auth/abs/sso/callback";
+
+    [Fact]
+    public async Task StartSsoAsync_AsksAbsForAPkceCodeFlowToOurCallback()
+    {
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation);
+
+        await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri("http://x" + _ssoHandler.LastRequestUri).Query);
+        _ssoHandler.LastRequestMethod.Should().Be(HttpMethod.Get);
+        _ssoHandler.LastRequestUri.Should().StartWith("/auth/openid?");
+        query["response_type"].Should().Be("code");
+        query["redirect_uri"].Should().Be(OurCallback);
+        query["code_challenge_method"].Should().Be("S256");
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_ChallengeIsTheS256OfTheVerifierWeKeep()
+    {
+        // If these two disagree, Authentik rejects the code exchange at the very last step.
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation);
+
+        var start = await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri("http://x" + _ssoHandler.LastRequestUri).Query);
+        var expectedChallenge = Convert.ToBase64String(
+                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.ASCII.GetBytes(start.CodeVerifier)))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        query["code_challenge"].Should().Be(expectedChallenge);
+        query["state"].Should().Be(start.State);
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_VerifierIsWithinTheLengthPkceAllows()
+    {
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation);
+
+        var start = await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        start.CodeVerifier.Length.Should().BeInRange(43, 128);
+        start.CodeVerifier.Should().MatchRegex("^[A-Za-z0-9_-]+$");
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_ReturnsAbsLocationWithoutFollowingIt()
+    {
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation);
+
+        var start = await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        start.AuthorizationUrl.Should().Be(AbsAuthorizeLocation);
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_ReturnsTheCookiesAbsSetWithoutTheirAttributes()
+    {
+        // The callback (step 4) fails with "No session" unless it presents these.
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation,
+            "connect.sid=s%3Aabc.sig; Path=/; HttpOnly",
+            "auth_method=openid-mobile; Max-Age=315360000; Path=/; HttpOnly");
+
+        var start = await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        start.Cookies.Should().Equal(new Dictionary<string, string>
+        {
+            ["connect.sid"] = "s%3Aabc.sig",
+            ["auth_method"] = "openid-mobile",
+        });
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_WithPublicUrl_MakesAbsBuildItsCallbackForThatHost()
+    {
+        // ABS derives the URL Authentik sends the browser back to from the request's own Host.
+        // Called by its internal name that is http://audiobookshelf/..., which no browser can reach.
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation);
+
+        await _sut.StartSsoAsync("http://abs.local", "https://audiobooks.example", OurCallback);
+
+        _ssoHandler.LastHost.Should().Be("audiobooks.example");
+        _ssoHandler.LastForwardedProto.Should().Be("https");
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_WithoutPublicUrl_DoesNotOverrideHost()
+    {
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation);
+
+        await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        _ssoHandler.LastHost.Should().BeNull();
+        _ssoHandler.LastForwardedProto.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_EveryCallGetsAFreshStateAndVerifier()
+    {
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation);
+
+        var first = await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+        var second = await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        first.State.Should().NotBe(second.State);
+        first.CodeVerifier.Should().NotBe(second.CodeVerifier);
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_AbsRefusesTheRedirectUri_ThrowsSayingSo()
+    {
+        _ssoHandler.SetupResponse(HttpStatusCode.BadRequest, "Invalid redirect_uri");
+
+        var act = () => _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        (await act.Should().ThrowAsync<HttpRequestException>())
+            .Which.Message.Should().Contain("Invalid redirect_uri");
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_AbsDoesNotRedirect_ThrowsRatherThanReturningNothing()
+    {
+        // e.g. OpenID is switched off in ABS and the route answers 200/404 instead of a redirect.
+        _ssoHandler.SetupResponse(HttpStatusCode.OK, "ok");
+
+        var act = () => _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_AbsRedirectsWithNowhereToGo_Throws()
+    {
+        _ssoHandler.SetupResponse(HttpStatusCode.Found, "");
+
+        var act = () => _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_AStatusThatIsNotARedirectIsNotFollowedEvenWithALocationHeader()
+    {
+        _ssoHandler.SetupWithLocation(HttpStatusCode.OK, AbsAuthorizeLocation);
+
+        var act = () => _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task StartSsoAsync_ASetCookieWithNoName_IsIgnored()
+    {
+        _ssoHandler.SetupRedirect(AbsAuthorizeLocation, "=orphan; Path=/", "connect.sid=abc; Path=/");
+
+        var start = await _sut.StartSsoAsync("http://abs.local", null, OurCallback);
+
+        start.Cookies.Should().Equal(new Dictionary<string, string> { ["connect.sid"] = "abc" });
+    }
+
+    [Fact]
+    public async Task CompleteSsoAsync_AnEmptyReply_Throws()
+    {
+        _ssoHandler.SetupResponse(HttpStatusCode.OK, "null");
+
+        var act = () => _sut.CompleteSsoAsync("http://abs.local", "c", "s", "v", AbsSessionCookies);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    // =========================================================================
+    // CompleteSsoAsync — step 4: trade the code for the person's own ABS tokens
+    // =========================================================================
+
+    private static readonly IReadOnlyDictionary<string, string> AbsSessionCookies =
+        new Dictionary<string, string> { ["connect.sid"] = "s%3Aabc.sig", ["auth_method"] = "openid-mobile" };
+
+    private static AbsLoginResponse SsoLoginResponse() => new(
+        new AbsUser("u1", "alice", "user", "legacy", true, null, ["lib-1"],
+            AccessToken: "access-jwt", RefreshToken: "refresh-token"),
+        "lib-1");
+
+    [Fact]
+    public async Task CompleteSsoAsync_SendsTheSessionCookiesFromStepOne()
+    {
+        // Without them ABS answers 400 "No session" (Auth.js checks req.session[strategyKey]).
+        _ssoHandler.SetupJsonResponseFor("/auth/openid/callback", SsoLoginResponse());
+
+        await _sut.CompleteSsoAsync("http://abs.local", "the-code", "the-state", "the-verifier", AbsSessionCookies);
+
+        _ssoHandler.LastCookie.Should().Be("connect.sid=s%3Aabc.sig; auth_method=openid-mobile");
+    }
+
+    [Fact]
+    public async Task CompleteSsoAsync_PassesCodeStateAndVerifierToAbs()
+    {
+        _ssoHandler.SetupJsonResponseFor("/auth/openid/callback", SsoLoginResponse());
+
+        await _sut.CompleteSsoAsync("http://abs.local", "the code+1", "the-state", "the-verifier", AbsSessionCookies);
+
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri("http://x" + _ssoHandler.LastRequestUri).Query);
+        _ssoHandler.LastRequestMethod.Should().Be(HttpMethod.Get);
+        _ssoHandler.LastRequestUri.Should().StartWith("/auth/openid/callback?");
+        query["code"].Should().Be("the code+1");
+        query["state"].Should().Be("the-state");
+        query["code_verifier"].Should().Be("the-verifier");
+    }
+
+    [Fact]
+    public async Task CompleteSsoAsync_ReturnsTheUsersOwnTokens()
+    {
+        _ssoHandler.SetupJsonResponseFor("/auth/openid/callback", SsoLoginResponse());
+
+        var result = await _sut.CompleteSsoAsync("http://abs.local", "c", "s", "v", AbsSessionCookies);
+
+        result.User.Username.Should().Be("alice");
+        result.User.AccessToken.Should().Be("access-jwt");
+        result.User.RefreshToken.Should().Be("refresh-token");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, "No session")]
+    [InlineData(HttpStatusCode.Unauthorized, "Unauthorized")]
+    public async Task CompleteSsoAsync_AbsError_ThrowsRatherThanStoringAHalfConnection(
+        HttpStatusCode status, string body)
+    {
+        _ssoHandler.SetupResponse(status, body);
+
+        var act = () => _sut.CompleteSsoAsync("http://abs.local", "c", "s", "v", AbsSessionCookies);
+
+        (await act.Should().ThrowAsync<HttpRequestException>()).Which.Message.Should().Contain(body);
+    }
+
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         public string? LastRequestUri { get; private set; }
         public HttpMethod? LastRequestMethod { get; private set; }
         public string? LastAuthorization { get; private set; }
+        public string? LastHost { get; private set; }
+        public string? LastForwardedProto { get; private set; }
+        public string? LastCookie { get; private set; }
         public Dictionary<string, string> LastHeaders { get; private set; } = [];
         public string? LastBody { get; private set; }
 
@@ -759,6 +1007,8 @@ public class AudiobookshelfServiceTests
         private string? _binaryContentType;
         private bool _binaryLengthKnown;
 
+        private string? _location;
+        private string[] _setCookies = [];
         private HttpStatusCode _statusCode = HttpStatusCode.OK;
         private string _content = "{}";
         private readonly List<(string PathContains, string Json)> _routes = [];
@@ -777,8 +1027,24 @@ public class AudiobookshelfServiceTests
         public void SetupJsonResponseFor<T>(string pathContains, T body) =>
             _routes.Add((pathContains, Json(body)));
 
+        /// <summary>Answer with <paramref name="status"/> and a Location header, which is only a redirect for some statuses.</summary>
+        public void SetupWithLocation(HttpStatusCode status, string location)
+        {
+            _statusCode = status;
+            _location = location;
+        }
+
+        /// <summary>Answer every request with a 302 to <paramref name="location"/> and these Set-Cookie headers.</summary>
+        public void SetupRedirect(string location, params string[] setCookies)
+        {
+            _statusCode = HttpStatusCode.Found;
+            _location = location;
+            _setCookies = setCookies;
+        }
+
         public void SetupResponse(HttpStatusCode statusCode, string content)
         {
+            _location = null;
             _statusCode = statusCode;
             _content = content;
         }
@@ -812,6 +1078,9 @@ public class AudiobookshelfServiceTests
             LastRequestUri = path;
             LastRequestMethod = request.Method;
             LastAuthorization = request.Headers.Authorization?.ToString();
+            LastHost = request.Headers.Host;
+            LastForwardedProto = request.Headers.TryGetValues("X-Forwarded-Proto", out var proto) ? proto.Single() : null;
+            LastCookie = request.Headers.TryGetValues("Cookie", out var cookie) ? string.Join("; ", cookie) : null;
             LastHeaders = request.Headers.ToDictionary(h => h.Key, h => string.Join(",", h.Value));
             LastBody = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
 
@@ -826,10 +1095,16 @@ public class AudiobookshelfServiceTests
             var match = _routes.FirstOrDefault(r => path.Contains(r.PathContains));
             var content = match.Json ?? _content;
 
-            return new HttpResponseMessage(_statusCode)
+            var response = new HttpResponseMessage(_statusCode)
             {
                 Content = new StringContent(content, System.Text.Encoding.UTF8, "application/json")
             };
+            if (_location is not null)
+                response.Headers.Location = new Uri(_location);
+            foreach (var setCookie in _setCookies)
+                response.Headers.TryAddWithoutValidation("Set-Cookie", setCookie);
+
+            return response;
         }
     }
 }

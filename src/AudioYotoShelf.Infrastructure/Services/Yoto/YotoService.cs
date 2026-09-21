@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text.Json;
+using AudioYotoShelf.Core;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Interfaces;
 using Microsoft.Extensions.Configuration;
@@ -15,12 +16,20 @@ public class YotoService(
     ILogger<YotoService> logger) : IYotoService
 {
     private const int MaxTranscodePollAttempts = 360;
+    private const int MaxPercent = 100;
     private const int TranscodePollDelayMs = 5000;
     private const int MaxUploadAttempts = 4;
     private static readonly JsonSerializerOptions JsonWeb = new(JsonSerializerDefaults.Web);
 
     // Base URLs are configurable (Yoto:ApiBase / Yoto:AuthBase) so tests/E2E can point them at a
     // mock Yoto server; they default to the real Yoto endpoints in production.
+    // Yoto grants only a default (user:account:view) to a client that does not ask, and refuses
+    // uploads with "User does not have required scope(s): 'user:content:manage'". Ask for what the
+    // app calls: content (upload audio, create/update/delete cards, list the person's own),
+    // and icons (upload custom ones).
+    private const string OAuthScopes =
+        "profile offline_access openid user:content:manage user:content:view user:icons:manage";
+
     private string YotoApiBase => configuration["Yoto:ApiBase"] ?? "https://api.yotoplay.com";
     private string YotoAuthBase => configuration["Yoto:AuthBase"] ?? "https://login.yotoplay.com";
 
@@ -44,7 +53,7 @@ public class YotoService(
         query["response_type"] = "code";
         query["client_id"] = ClientId;
         query["redirect_uri"] = redirectUri;
-        query["scope"] = "profile offline_access openid";
+        query["scope"] = OAuthScopes;
         query["audience"] = YotoApiBase;
         query["state"] = state;
         return $"{YotoAuthBase}/authorize?{query}";
@@ -257,9 +266,10 @@ public class YotoService(
     }
 
     public async Task<YotoTranscodeResponse> PollTranscodeStatusAsync(
-        string accessToken, string uploadId, CancellationToken ct = default)
+        string accessToken, string uploadId, IProgress<int>? progress = null, CancellationToken ct = default)
     {
         using var client = CreateApiClient(accessToken);
+        int? lastReportedPercent = null;
 
         for (var attempt = 0; attempt < MaxTranscodePollAttempts; attempt++)
         {
@@ -283,10 +293,16 @@ public class YotoService(
                 return result;
             }
 
+            if (result.Percent is { } percent && percent != lastReportedPercent)
+            {
+                lastReportedPercent = percent;
+                progress?.Report(percent);
+            }
+
             // Stryker disable once Equality,Arithmetic : the condition only gates a progress log line
             if (attempt % 10 == 0)
-                logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: status={Status}",
-                    attempt, MaxTranscodePollAttempts, uploadId, result.Status ?? "null");
+                logger.LogInformation("Transcode poll {Attempt}/{Max} for {UploadId}: phase={Phase} percent={Percent}",
+                    attempt, MaxTranscodePollAttempts, uploadId, result.Phase ?? "unknown", result.Percent?.ToString() ?? "unknown");
 
             await DelayBetweenTranscodePollsAsync(ct);
         }
@@ -342,11 +358,32 @@ public class YotoService(
         string? Str(string name) =>
             node.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
 
+        var (phase, percent) = ReadYotoProgress(node);
         return new YotoTranscodeResponse(
             Str("transcodedSha256"),
             TranscodedInfo: null,
-            Str("status") ?? Str("transcodeStatus"));
+            Str("status") ?? Str("transcodeStatus"),
+            phase,
+            percent);
     }
+
+    /// <summary>Yoto reports how far it has got under <c>progress: { phase, percent }</c>.</summary>
+    private static (string? Phase, int? Percent) ReadYotoProgress(JsonElement transcode)
+    {
+        if (!transcode.TryGetProperty("progress", out var progress) || progress.ValueKind != JsonValueKind.Object)
+            return (null, null);
+
+        var phase = progress.TryGetProperty("phase", out var phaseElement) && phaseElement.ValueKind == JsonValueKind.String
+            ? phaseElement.GetString()
+            : null;
+        var hasPercent = progress.TryGetProperty("percent", out var percentElement)
+                         && percentElement.ValueKind == JsonValueKind.Number
+                         && percentElement.TryGetDouble(out _);
+
+        // Kept inside 0-100 here so nothing downstream has to trust what Yoto sends.
+        return (phase, hasPercent ? Math.Clamp((int)Math.Round(percentElement.GetDouble()), 0, MaxPercent) : null);
+    }
+
 
     public async Task<string> UploadAndTranscodeAsync(
         string accessToken, Stream audioStream, long contentLength, string contentType,
@@ -361,10 +398,13 @@ public class YotoService(
         await UploadAudioFileAsync(uploadInfo.UploadUrl, audioStream, contentLength, contentType, ct);
 
         // Step 3: Poll for transcode completion
-        progress?.Report(60);
-        var transcodeResult = await PollTranscodeStatusAsync(accessToken, uploadInfo.UploadId, ct);
+        progress?.Report(YotoUploadProgress.TranscodeStart);
+        var transcodeResult = await PollTranscodeStatusAsync(
+            accessToken, uploadInfo.UploadId,
+            progress is null ? null : new InlineProgress<int>(yoto => progress.Report(YotoUploadProgress.FromTranscodePercent(yoto))),
+            ct);
 
-        progress?.Report(100);
+        progress?.Report(YotoUploadProgress.Complete);
         return transcodeResult.TranscodedSha256!;
     }
 

@@ -44,7 +44,10 @@ public class YotoServiceTests
         query["response_type"].Should().Be("code");
         query["client_id"].Should().Be("client-1");
         query["redirect_uri"].Should().Be("https://app.example/callback");
-        query["scope"].Should().Be("profile offline_access openid");
+        // Yoto grants only user:account:view to a client that does not ask, and refuses uploads without
+        // user:content:manage, so the content and icon scopes are requested on purpose.
+        query["scope"].Should().Be(
+            "profile offline_access openid user:content:manage user:content:view user:icons:manage");
         query["audience"].Should().Be(ApiBase);
         query["state"].Should().Be("state-1");
     }

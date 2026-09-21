@@ -38,7 +38,12 @@ onMounted(async () => {
   if (!connectionStore.status) {
     await connectionStore.loadStatus()
   }
-  if (!connectionStore.isAbsConnected) {
+  // Wait for the first navigation: until it settles there is no current route to compare with.
+  // Already on setup means already where they are headed; pushing again would drop the query,
+  // and with it the reason the server sent them back (?sso=expired).
+  await router.isReady()
+  const isOnSetup = router.currentRoute.value.name === 'setup'
+  if (!connectionStore.isAbsConnected && !isOnSetup) {
     router.push('/setup')
   }
 })

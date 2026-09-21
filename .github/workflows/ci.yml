@@ -50,7 +50,9 @@ jobs:
           files: ./TestResults/**/coverage.cobertura.xml
           flags: backend
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
+          # This fork has no Codecov token, so the upload is refused ("Token required - not valid
+          # tokenless upload") and would turn every run red. Coverage is a report here, not a gate.
+          fail_ci_if_error: false
 
       - name: Publish test results to PR
         if: always()
