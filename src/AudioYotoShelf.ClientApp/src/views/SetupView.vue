@@ -14,10 +14,7 @@ const SSO_START_URL = '/api/auth/abs/sso/start'
 // so an arbitrary ?sso= value from the address bar cannot land on an inherited property.
 const SSO_NOTICES = new Map([
   ['expired', 'That sign-in expired. Try again.'],
-  [
-    'unavailable',
-    "Single sign-on isn't available right now. Use an API key or password instead.",
-  ],
+  ['unavailable', "Single sign-on isn't available right now. Use an API key or password instead."],
 ])
 
 const router = useRouter()
