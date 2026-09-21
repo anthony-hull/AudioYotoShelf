@@ -27,6 +27,74 @@ public class TransferJobServiceTests
     }
 
     // =========================================================================
+    // Cancelling a transfer must end its job, not fail it: a failed job is retried by Hangfire,
+    // which restarted a transfer the person had just cancelled.
+    // =========================================================================
+
+    private static OperationCanceledException CancelledByThePerson() => new("Transfer was cancelled");
+
+    [Fact]
+    public async Task ExecuteBookTransferAsync_CancelledByThePerson_EndsWithoutErrorSoItIsNotRetried()
+    {
+        _orchestrator.Setup(o => o.TransferBookAsync(
+                It.IsAny<Guid>(), It.IsAny<CreateTransferRequest>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(CancelledByThePerson());
+
+        var act = () => _sut.ExecuteBookTransferAsync(Guid.NewGuid(), TestData.CreateTransferRequest(), null, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ExecuteSeriesTransferAsync_CancelledByThePerson_EndsWithoutErrorSoItIsNotRetried()
+    {
+        _orchestrator.Setup(o => o.TransferSeriesAsync(
+                It.IsAny<Guid>(), It.IsAny<CreateSeriesTransferRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(CancelledByThePerson());
+
+        var act = () => _sut.ExecuteSeriesTransferAsync(Guid.NewGuid(), TestData.CreateSeriesTransferRequest(), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ExecuteRetryTransferAsync_CancelledByThePerson_EndsWithoutErrorSoItIsNotRetried()
+    {
+        _orchestrator.Setup(o => o.RetryTransferAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(CancelledByThePerson());
+
+        var act = () => _sut.ExecuteRetryTransferAsync(Guid.NewGuid(), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ExecuteBookTransferAsync_CancelledBecauseTheServerIsStopping_StillThrowsSoTheJobIsRequeued()
+    {
+        using var shutdown = new CancellationTokenSource();
+        shutdown.Cancel();
+        _orchestrator.Setup(o => o.TransferBookAsync(
+                It.IsAny<Guid>(), It.IsAny<CreateTransferRequest>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException(shutdown.Token));
+
+        var act = () => _sut.ExecuteBookTransferAsync(Guid.NewGuid(), TestData.CreateTransferRequest(), null, shutdown.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ExecuteBookTransferAsync_AnOrdinaryFailure_StillThrowsSoItIsRetried()
+    {
+        _orchestrator.Setup(o => o.TransferBookAsync(
+                It.IsAny<Guid>(), It.IsAny<CreateTransferRequest>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("403"));
+
+        var act = () => _sut.ExecuteBookTransferAsync(Guid.NewGuid(), TestData.CreateTransferRequest(), null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    // =========================================================================
     // ExecuteBookTransferAsync
     // =========================================================================
 

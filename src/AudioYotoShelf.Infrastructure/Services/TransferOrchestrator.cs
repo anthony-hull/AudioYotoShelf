@@ -398,6 +398,9 @@ public class TransferOrchestrator(
 
         for (int i = 0; i < mappings.Count; i++)
         {
+            // Cancel only sets a flag; without looking for it here a cancelled book keeps going
+            // through every remaining track (about three minutes each at Yoto).
+            await ThrowIfCancelledAsync(transfer, ct);
             mapping = mappings[i];
 
             // Check for existing SHA256 deduplication.
@@ -671,13 +674,18 @@ public class TransferOrchestrator(
             fileIno, outputPath, fileSize);
     }
 
-    private async Task UpdateStatus(
-        CardTransfer transfer, TransferStatus status, int progress, CancellationToken ct)
+    /// <summary>Re-reads the transfer from the database, because Cancel is a write made by another request.</summary>
+    private async Task ThrowIfCancelledAsync(CardTransfer transfer, CancellationToken ct)
     {
-        // Re-read from DB to detect if transfer was cancelled while we were working
         await db.Entry(transfer).ReloadAsync(ct);
         if (transfer.Status == TransferStatus.Cancelled)
             throw new OperationCanceledException("Transfer was cancelled");
+    }
+
+    private async Task UpdateStatus(
+        CardTransfer transfer, TransferStatus status, int progress, CancellationToken ct)
+    {
+        await ThrowIfCancelledAsync(transfer, ct);
 
         transfer.Status = status;
         transfer.ProgressPercent = progress;
