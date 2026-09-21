@@ -40,7 +40,12 @@ describe('App', () => {
     // As in the browser, the app mounts while the router's first navigation is still resolving.
     const router = createTestRouter('/setup?sso=expired')
 
-    mount(App, { global: { plugins: [router], stubs: { AppNav: true, ToastContainer: true, ConfirmDialog: true } } })
+    mount(App, {
+      global: {
+        plugins: [router],
+        stubs: { AppNav: true, ToastContainer: true, ConfirmDialog: true },
+      },
+    })
     await flushPromises()
 
     expect(router.currentRoute.value.fullPath).toBe('/setup?sso=expired')
@@ -49,7 +54,12 @@ describe('App', () => {
   it('still sends someone who is not connected to setup from anywhere else', async () => {
     const router = createTestRouter('/library')
 
-    mount(App, { global: { plugins: [router], stubs: { AppNav: true, ToastContainer: true, ConfirmDialog: true } } })
+    mount(App, {
+      global: {
+        plugins: [router],
+        stubs: { AppNav: true, ToastContainer: true, ConfirmDialog: true },
+      },
+    })
     await flushPromises()
 
     expect(router.currentRoute.value.name).toBe('setup')

@@ -67,12 +67,18 @@ public class TransferTrackStateTests : IDisposable
         db.UserConnections.Add(user);
         var transfer = new CardTransfer
         {
-            UserConnectionId = user.Id, AbsLibraryItemId = "item-1", BookTitle = "Book", AgeSuggestionReason = "n/a",
+            UserConnectionId = user.Id,
+            AbsLibraryItemId = "item-1",
+            BookTitle = "Book",
+            AgeSuggestionReason = "n/a",
         };
         db.CardTransfers.Add(transfer);
         var tracks = Enumerable.Range(0, trackCount).Select(i => new TrackMapping
         {
-            CardTransferId = transfer.Id, AbsFileIno = $"ino-{i}", ChapterTitle = $"Chapter {i + 1}", ChapterIndex = i,
+            CardTransferId = transfer.Id,
+            AbsFileIno = $"ino-{i}",
+            ChapterTitle = $"Chapter {i + 1}",
+            ChapterIndex = i,
         }).ToList();
         db.TrackMappings.AddRange(tracks);
         await db.SaveChangesAsync();
@@ -123,12 +129,18 @@ public class TransferTrackStateTests : IDisposable
         var (transfer, tracks) = await SeedTransferAsync(1);
         var earlier = new CardTransfer
         {
-            UserConnectionId = transfer.UserConnectionId, AbsLibraryItemId = "item-1", BookTitle = "Earlier", AgeSuggestionReason = "n/a",
+            UserConnectionId = transfer.UserConnectionId,
+            AbsLibraryItemId = "item-1",
+            BookTitle = "Earlier",
+            AgeSuggestionReason = "n/a",
         };
         _dbFixture.DbContext.CardTransfers.Add(earlier);
         _dbFixture.DbContext.TrackMappings.Add(new TrackMapping
         {
-            CardTransferId = earlier.Id, AbsFileIno = "ino-0", ChapterTitle = "Chapter 1", YotoTranscodedSha256 = "already-there",
+            CardTransferId = earlier.Id,
+            AbsFileIno = "ino-0",
+            ChapterTitle = "Chapter 1",
+            YotoTranscodedSha256 = "already-there",
         });
         await _dbFixture.DbContext.SaveChangesAsync();
 
@@ -146,7 +158,10 @@ public class TransferTrackStateTests : IDisposable
         var (transfer, tracks) = await SeedTransferAsync(2);
         var earlier = new CardTransfer
         {
-            UserConnectionId = transfer.UserConnectionId, AbsLibraryItemId = "item-1", BookTitle = "Earlier", AgeSuggestionReason = "n/a",
+            UserConnectionId = transfer.UserConnectionId,
+            AbsLibraryItemId = "item-1",
+            BookTitle = "Earlier",
+            AgeSuggestionReason = "n/a",
         };
         _dbFixture.DbContext.CardTransfers.Add(earlier);
         _dbFixture.DbContext.TrackMappings.AddRange(
