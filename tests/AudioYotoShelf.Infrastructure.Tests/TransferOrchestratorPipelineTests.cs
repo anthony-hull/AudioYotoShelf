@@ -106,9 +106,9 @@ public partial class TransferOrchestratorTests
             var media = TestData.CreateAbsMedia(
                 audioFiles: Files((0, "ino-1", 600, 9_000)),
                 chapters: [TestData.CreateAbsChapter(0, "One", 0, 250), TestData.CreateAbsChapter(1, "Two", 250, 600)]);
-            _absService.Setup(s => s.DownloadAudioFileAsync(
+            _absService.Setup(s => s.DownloadAudioFileWithMetadataAsync(
                     It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(() => new MemoryStream([1, 2, 3, 4]));
+                .ReturnsAsync(() => (new MemoryStream([1, 2, 3, 4]) as Stream, 4L, "audio/mp4"));
             var seenInputs = new List<(string Path, string Hex, double Start, double End)>();
             _chapterExtractor.Setup(c => c.ExtractChapterAsync(
                     It.IsAny<string>(), It.IsAny<double>(), It.IsAny<double>(), "m4a", It.IsAny<CancellationToken>()))
@@ -121,7 +121,7 @@ public partial class TransferOrchestratorTests
             var (mappings, chapterPaths) = await sut.BuildTrackMappingsAsync(
                 TestData.CreateUserConnection(), TestData.CreateAbsLibraryItem("book-9", media), transfer, CancellationToken.None);
 
-            _absService.Verify(s => s.DownloadAudioFileAsync(
+            _absService.Verify(s => s.DownloadAudioFileWithMetadataAsync(
                 It.IsAny<string>(), It.IsAny<string>(), "book-9", "ino-1", It.IsAny<CancellationToken>()), Times.Once);
             var expectedInput = Path.Combine(tempDir, "not-yet-created", $"{transfer.Id}_input.mp3");
             seenInputs.Should().Equal(
@@ -255,20 +255,22 @@ public partial class TransferOrchestratorTests
 
         (sent!.Value.Length, sent.Value.Type).Should().Be((100L, "audio/mp4"));
         sent.Value.Stream.CanRead.Should().BeFalse("the stream is disposed once the upload returns");
-        _absService.Verify(s => s.DownloadAudioFileAsync(
+        _absService.Verify(s => s.DownloadAudioFileWithMetadataAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task UploadTracks_WholeFileTrack_IsDownloadedFirstAndUploadedAsMpeg_SavingTheShaAndUrl()
+    public async Task UploadTracks_WholeFileTrack_IsDownloadedFirstAndUploadedAsTheContentTypeAudiobookshelfServed_SavingTheShaAndUrl()
     {
+        // Yoto's transcoder is told what the bytes are, not shown them — declaring an ogg/opus file as
+        // mp3 (as the code used to, unconditionally) made Yoto decode it wrong and play ~1s per track.
         var (user, transfer) = await SeedTransferAsync();
         var mapping = Mapping(transfer.Id, "ino-9", 0);
         _db.TrackMappings.Add(mapping);
         await _db.SaveChangesAsync();
-        _absService.Setup(s => s.DownloadAudioFileAsync(
+        _absService.Setup(s => s.DownloadAudioFileWithMetadataAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new MemoryStream(new byte[250]));
+            .ReturnsAsync(() => (new MemoryStream(new byte[250]) as Stream, 250L, "audio/ogg"));
         (long Length, string Type)? sent = null;
         _yotoService.Setup(s => s.UploadAndTranscodeAsync(
                 It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
@@ -288,8 +290,8 @@ public partial class TransferOrchestratorTests
             File.Delete(Path.Combine(Path.GetTempPath(), $"{transfer.Id}_track0.tmp"));
         }
 
-        sent.Should().Be((250L, "audio/mpeg"));
-        _absService.Verify(s => s.DownloadAudioFileAsync(
+        sent.Should().Be((250L, "audio/ogg"));
+        _absService.Verify(s => s.DownloadAudioFileWithMetadataAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, transfer.AbsLibraryItemId, "ino-9", It.IsAny<CancellationToken>()), Times.Once);
         var stored = (await StoredMappingsAsync(transfer.Id)).Single();
         (stored.YotoTranscodedSha256, stored.YotoTrackUrl).Should().Be(("sha-whole", "yoto:#sha-whole"));

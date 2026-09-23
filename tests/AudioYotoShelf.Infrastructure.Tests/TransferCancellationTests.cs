@@ -36,9 +36,9 @@ public class TransferCancellationTests : IDisposable
             Mock.Of<IAgeSuggestionService>(), Mock.Of<IChapterExtractor>(), Mock.Of<ITransferProgressNotifier>(), configuration,
             new TransferMetrics(), Mock.Of<ILogger<TransferOrchestrator>>());
 
-        _abs.Setup(a => a.DownloadAudioFileAsync(
+        _abs.Setup(a => a.DownloadAudioFileWithMetadataAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new MemoryStream([1, 2, 3]));
+            .ReturnsAsync(() => (new MemoryStream([1, 2, 3]) as Stream, 3L, "audio/mpeg"));
     }
 
     public void Dispose()

@@ -330,7 +330,10 @@ public partial class PlaylistTransferOrchestratorTests
     [InlineData("book.mp4", "audio/mp4", ".mp4")]
     [InlineData("book.aac", "audio/mp4", ".aac")]
     [InlineData("book.mp3", "audio/mpeg", ".mp3")]
-    [InlineData("book.ogg", "audio/mpeg", ".ogg")]
+    [InlineData("book.ogg", "audio/ogg", ".ogg")]
+    [InlineData("book.opus", "audio/ogg", ".opus")]
+    [InlineData("book.flac", "audio/flac", ".flac")]
+    [InlineData("book.wav", "audio/wav", ".wav")]
     [InlineData("book", "audio/mpeg", ".mp3")]         // no extension: defaults to .mp3
     public async Task TransferPlaylist_ChoosesTheContentTypeFromTheFileExtension(string filename, string contentType, string extension)
     {

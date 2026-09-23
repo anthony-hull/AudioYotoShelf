@@ -37,9 +37,9 @@ public partial class TransferOrchestratorTests
             .ToArray();
         var media = TestData.CreateAbsMedia(audioFiles: Files((0, "ino-1", 300, 9_000)), chapters: chapters);
         ServeItemWith(TestData.CreateAbsLibraryItem("book-1", media));
-        _absService.Setup(s => s.DownloadAudioFileAsync(
+        _absService.Setup(s => s.DownloadAudioFileWithMetadataAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new MemoryStream([1, 2, 3, 4]));
+            .ReturnsAsync(() => (new MemoryStream([1, 2, 3, 4]) as Stream, 4L, "audio/mp4"));
     }
 
     private (TransferOrchestrator Sut, string TempDirectory) CreateSutWithOwnTempDirectory()
