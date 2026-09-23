@@ -90,6 +90,7 @@ public class TransferOrchestrator(
 
         await db.SaveChangesAsync(ct);
 
+        IEnumerable<string> extractedChapterFiles = [];
         try
         {
             var item = await absService.GetLibraryItemAsync(
@@ -113,6 +114,7 @@ public class TransferOrchestrator(
 
             await UpdateStatus(transfer, TransferStatus.DownloadingAudio, 5, ct);
             var (trackMappings, chapterPaths) = await BuildTrackMappingsAsync(user, item, transfer, ct);
+            extractedChapterFiles = chapterPaths.Values;
 
             await UpdateStatus(transfer, TransferStatus.UploadingToYoto, 20, ct);
             var yotoAccessToken = await EnsureYotoTokenAsync(user, ct);
@@ -170,6 +172,7 @@ public class TransferOrchestrator(
         finally
         {
             CleanupTempFiles(transfer.Id);
+            DeleteFiles(extractedChapterFiles);
         }
     }
 
@@ -290,12 +293,33 @@ public class TransferOrchestrator(
     // Private pipeline methods
     // =========================================================================
 
+    /// <summary>
+    /// Builds the tracks for a transfer. Extracted chapter files are named by ffmpeg, not by the transfer,
+    /// so <see cref="CleanupTempFiles"/> cannot find them: they are deleted here if building fails, and by
+    /// the caller once the transfer ends.
+    /// </summary>
     internal async Task<(List<TrackMapping> Mappings, Dictionary<int, string> ChapterPaths)> BuildTrackMappingsAsync(
         UserConnection user, AbsLibraryItem item, CardTransfer transfer, CancellationToken ct)
     {
+        var chapterPaths = new Dictionary<int, string>();
+        try
+        {
+            var mappings = await CreateTrackMappingsAsync(user, item, transfer, chapterPaths, ct);
+            return (mappings, chapterPaths);
+        }
+        catch
+        {
+            DeleteFiles(chapterPaths.Values);
+            throw;
+        }
+    }
+
+    private async Task<List<TrackMapping>> CreateTrackMappingsAsync(
+        UserConnection user, AbsLibraryItem item, CardTransfer transfer,
+        Dictionary<int, string> chapterPaths, CancellationToken ct)
+    {
         var media = item.Media!;
         var mappings = new List<TrackMapping>();
-        var chapterPaths = new Dictionary<int, string>();
 
         if (media.AudioFiles.Length == 0)
             throw new InvalidOperationException("Item has no audio files to transfer");
@@ -375,7 +399,7 @@ public class TransferOrchestrator(
         }
 
         await db.SaveChangesAsync(ct);
-        return (mappings, chapterPaths);
+        return mappings;
     }
 
     internal async Task UploadTracksAsync(
@@ -439,10 +463,9 @@ public class TransferOrchestrator(
                 // Direct download from ABS — need to buffer to temp file for content-length
                 var tempPath = Path.Combine(TempDir, $"{transfer.Id}_track{i}.tmp");
                 ReportTrack(TrackPhase.Downloading, null, $"Downloading track {i + 1}/{mappings.Count} from Audiobookshelf…");
-                await DownloadToFileAsync(user!, transfer.AbsLibraryItemId, mapping.AbsFileIno, tempPath, ct);
+                contentType = await DownloadToFileAsync(user!, transfer.AbsLibraryItemId, mapping.AbsFileIno, tempPath, ct);
                 audioStream = File.OpenRead(tempPath);
                 contentLength = new FileInfo(tempPath).Length;
-                contentType = "audio/mpeg";
             }
 
             try
@@ -659,19 +682,28 @@ public class TransferOrchestrator(
     private Task<string> EnsureYotoTokenAsync(UserConnection user, CancellationToken ct) =>
         YotoTokens.EnsureValidAsync(db, yotoService, user, logger, ct);
 
-    private async Task DownloadToFileAsync(
+    /// <summary>
+    /// Downloads the source file and returns the content type Audiobookshelf served it as, so the
+    /// caller can tell Yoto the truth. It matters: ABS audiobooks are commonly m4b/m4a, ogg/opus or
+    /// mp3, and Yoto's transcoder is told what it is receiving, not shown it — a wrong declared type
+    /// (e.g. an ogg/opus file sent as "audio/mpeg") produced a card that Yoto played for about a
+    /// second per track before moving on, because it decoded the bytes as the wrong format.
+    /// </summary>
+    private async Task<string> DownloadToFileAsync(
         UserConnection user, string itemId, string fileIno, string outputPath, CancellationToken ct)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
-        await using var sourceStream = await absService.DownloadAudioFileAsync(
+        var (sourceStream, _, contentType) = await absService.DownloadAudioFileWithMetadataAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, fileIno, ct);
-        await using var fileStream = File.Create(outputPath);
-        await sourceStream.CopyToAsync(fileStream, ct);
+        await using (sourceStream)
+        await using (var fileStream = File.Create(outputPath))
+            await sourceStream.CopyToAsync(fileStream, ct);
 
-        var fileSize = fileStream.Length;
-        logger.LogInformation("Downloaded {FileIno} to {Path} ({Size} bytes)",
-            fileIno, outputPath, fileSize);
+        var fileSize = new FileInfo(outputPath).Length;
+        logger.LogInformation("Downloaded {FileIno} to {Path} ({Size} bytes, {ContentType})",
+            fileIno, outputPath, fileSize, contentType);
+        return contentType;
     }
 
     /// <summary>Re-reads the transfer from the database, because Cancel is a write made by another request.</summary>
@@ -740,6 +772,21 @@ public class TransferOrchestrator(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to clean up temp files for transfer {TransferId}", transferId);
+        }
+    }
+
+    private void DeleteFiles(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to delete temp file {File}", path);
+            }
         }
     }
 

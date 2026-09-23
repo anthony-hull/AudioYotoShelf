@@ -31,6 +31,7 @@ public partial class TransferOrchestratorTests : IDisposable
     private readonly IConfiguration _configuration;
     private readonly TransferOrchestrator _sut;
     private readonly string _tempChapterFile;
+    private readonly List<string> _extractedChapterFiles = [];
 
     public TransferOrchestratorTests()
     {
@@ -70,6 +71,7 @@ public partial class TransferOrchestratorTests : IDisposable
     public void Dispose()
     {
         if (File.Exists(_tempChapterFile)) File.Delete(_tempChapterFile);
+        foreach (var path in _extractedChapterFiles.Where(File.Exists)) File.Delete(path);
         _dbFixture.Dispose();
         _metrics.Dispose();
     }
@@ -110,13 +112,23 @@ public partial class TransferOrchestratorTests : IDisposable
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => new MemoryStream(new byte[] { 0xFF, 0xD8 }));
 
-        _absService.Setup(s => s.DownloadAudioFileAsync(
+        // The orchestrator downloads by this method, not DownloadAudioFileAsync, because it needs the
+        // real content type Audiobookshelf served the file as (see DownloadToFileAsync).
+        _absService.Setup(s => s.DownloadAudioFileWithMetadataAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new MemoryStream(new byte[100]));
+            .ReturnsAsync(() => (new MemoryStream(new byte[100]) as Stream, 100L, "audio/mpeg"));
 
+        // A fresh file per call, as ffmpeg makes: a transfer deletes the chapter files it extracted, so
+        // handing every chapter of every transfer the same file would fail the second transfer.
         _chapterExtractor.Setup(s => s.ExtractChapterAsync(
                 It.IsAny<string>(), It.IsAny<double>(), It.IsAny<double>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(_tempChapterFile);
+            .ReturnsAsync(() =>
+            {
+                var path = Path.Combine(Path.GetTempPath(), $"test_chapter_{Guid.NewGuid():N}.m4a");
+                File.WriteAllBytes(path, new byte[100]);
+                _extractedChapterFiles.Add(path);
+                return path;
+            });
     }
 
     private async Task<UserConnection> SeedUserAsync()
