@@ -463,10 +463,9 @@ public class TransferOrchestrator(
                 // Direct download from ABS — need to buffer to temp file for content-length
                 var tempPath = Path.Combine(TempDir, $"{transfer.Id}_track{i}.tmp");
                 ReportTrack(TrackPhase.Downloading, null, $"Downloading track {i + 1}/{mappings.Count} from Audiobookshelf…");
-                await DownloadToFileAsync(user!, transfer.AbsLibraryItemId, mapping.AbsFileIno, tempPath, ct);
+                contentType = await DownloadToFileAsync(user!, transfer.AbsLibraryItemId, mapping.AbsFileIno, tempPath, ct);
                 audioStream = File.OpenRead(tempPath);
                 contentLength = new FileInfo(tempPath).Length;
-                contentType = "audio/mpeg";
             }
 
             try
@@ -683,19 +682,28 @@ public class TransferOrchestrator(
     private Task<string> EnsureYotoTokenAsync(UserConnection user, CancellationToken ct) =>
         YotoTokens.EnsureValidAsync(db, yotoService, user, logger, ct);
 
-    private async Task DownloadToFileAsync(
+    /// <summary>
+    /// Downloads the source file and returns the content type Audiobookshelf served it as, so the
+    /// caller can tell Yoto the truth. It matters: ABS audiobooks are commonly m4b/m4a, ogg/opus or
+    /// mp3, and Yoto's transcoder is told what it is receiving, not shown it — a wrong declared type
+    /// (e.g. an ogg/opus file sent as "audio/mpeg") produced a card that Yoto played for about a
+    /// second per track before moving on, because it decoded the bytes as the wrong format.
+    /// </summary>
+    private async Task<string> DownloadToFileAsync(
         UserConnection user, string itemId, string fileIno, string outputPath, CancellationToken ct)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
-        await using var sourceStream = await absService.DownloadAudioFileAsync(
+        var (sourceStream, _, contentType) = await absService.DownloadAudioFileWithMetadataAsync(
             user.AudiobookshelfUrl, user.AudiobookshelfToken!, itemId, fileIno, ct);
-        await using var fileStream = File.Create(outputPath);
-        await sourceStream.CopyToAsync(fileStream, ct);
+        await using (sourceStream)
+        await using (var fileStream = File.Create(outputPath))
+            await sourceStream.CopyToAsync(fileStream, ct);
 
-        var fileSize = fileStream.Length;
-        logger.LogInformation("Downloaded {FileIno} to {Path} ({Size} bytes)",
-            fileIno, outputPath, fileSize);
+        var fileSize = new FileInfo(outputPath).Length;
+        logger.LogInformation("Downloaded {FileIno} to {Path} ({Size} bytes, {ContentType})",
+            fileIno, outputPath, fileSize, contentType);
+        return contentType;
     }
 
     /// <summary>Re-reads the transfer from the database, because Cancel is a write made by another request.</summary>

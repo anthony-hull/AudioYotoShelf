@@ -2,6 +2,32 @@
 
 Architectural decisions and hard-won constraints for the homelab fork. Grep this before touching an area.
 
+## 2026-09-23 — A downloaded track is uploaded to Yoto as the content type Audiobookshelf served it as
+
+**Decision.** `TransferOrchestrator.DownloadToFileAsync` now downloads through `DownloadAudioFileWithMetadataAsync`
+and returns the real content type, which `UploadTracksAsync` sends to Yoto instead of a hardcoded `"audio/mpeg"`.
+`PlaylistTransferOrchestrator.ContentTypeFor` now maps `.ogg`/`.opus` to `audio/ogg`, `.flac` to `audio/flac` and
+`.wav` to `audio/wav`, instead of folding everything that isn't m4a/m4b/mp4/aac into `audio/mpeg`.
+
+**Why (measured live on `pablo`, card `7NQ2D`, 2026-09-23).** A 17-file "Harry Potter and the Philosopher's Stone"
+transfer played each track for about a second on the Yoto app before skipping to the next. The server log for that
+transfer read `Streaming audio file 36441 from item f648c8fd-...: 24041522 bytes, audio/ogg` — Audiobookshelf serves
+this library's audio as Opus-in-Ogg — but `UploadTracksAsync`'s direct-download branch declared every such track
+`audio/mpeg` to Yoto's upload regardless of source format. Yoto's transcoder is told what the bytes are, not shown
+them (`Content-Type` on a presigned PUT), so it decoded an Ogg/Opus stream as MP3.
+
+**The fix was already half-written.** `IAudiobookshelfService.DownloadAudioFileWithMetadataAsync` — same download,
+plus the real `Content-Type` — existed with its own tests (`AudiobookshelfServiceTests`) but was never called from
+either orchestrator; both called the plain `DownloadAudioFileAsync`, which discards the header. An existing test,
+`UploadTracks_WholeFileTrack_IsDownloadedFirstAndUploadedAsMpeg_...`, pinned the wrong behaviour as intended; it is
+renamed and now asserts pass-through. `PlaylistTransferOrchestratorPipelineTests`' content-type theory had the same
+`.ogg` row pinned to `audio/mpeg`.
+
+**What this does not cover.** The card already on Yoto (`7NQ2D`) is not fixed by this change — it needs
+re-transferring once deployed. Extracted chapter files (ffmpeg's own m4a output) and merged/split playlist files
+are unaffected; they were never guessing at the source format.
+
+
 ## 2026-09-21 — A single-file book's chapter files are deleted when its transfer ends
 
 **Decision.** `TransferBookAsync` deletes the chapter files it extracted in its `finally`, whether the transfer completed,
