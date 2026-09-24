@@ -50,7 +50,7 @@ public partial class PlaylistTransferOrchestratorTests
             .ReturnsAsync((string _, Stream stream, long length, string type, IProgress<int>? _, CancellationToken _) =>
             {
                 uploads.Add(new Upload(((FileStream)stream).Name, length, type));
-                return "sha-123";
+                return new YotoTranscodeResult("sha-123", null, null, null);
             });
         return uploads;
     }
@@ -118,6 +118,27 @@ public partial class PlaylistTransferOrchestratorTests
                 ("0101", "Intro", "yoto:#sha-123", 300.0, 100L, "aac", "audio", "stereo"),
                 ("0102", "chapter1.mp3", "yoto:#sha-123", 400.0, 100L, "aac", "audio", "stereo"));   // no chapter for file 1: filename
         uploads.Select(u => u.ContentType).Should().Equal("audio/mpeg", "audio/mpeg");
+        TempDirShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_ATrackTranscodedToSomethingOtherThanAac_DeclaresWhatItReallyIs()
+    {
+        // Same defect as the book-transfer path: a declared Format that doesn't match what Yoto
+        // actually made fails on the device after a couple of seconds.
+        var card = CaptureCard();
+        _yotoService.Setup(s => s.UploadAndTranscodeAsync(
+                It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
+                It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new YotoTranscodeResult("sha-opus", "opus", 300.4, 12_345));
+        var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,
+            items: [Item("book-1", 0, "Solo", [300])]);
+        SetupBook("book-1", TestData.CreateAbsMedia(audioFiles: [TestData.CreateAbsAudioFile(0, "ino-1", 300)], chapters: []));
+
+        await _sut.TransferPlaylistAsync(playlistId);
+
+        var track = card.Content!.Chapters.Single().Tracks.Single();
+        (track.Format, track.Duration, track.FileSize).Should().Be(("opus", 300.4, 12_345L));
         TempDirShouldBeEmpty();
     }
 

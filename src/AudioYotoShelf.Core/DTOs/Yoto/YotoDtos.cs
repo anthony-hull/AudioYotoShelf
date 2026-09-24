@@ -113,6 +113,18 @@ public record YotoTranscodedInfo(
     string Format
 );
 
+/// <summary>
+/// What a completed upload produced. <see cref="Format"/>/<see cref="Duration"/>/<see cref="FileSize"/>
+/// are null when Yoto's response carried no <c>transcodedInfo</c> — the caller falls back to its own
+/// estimate, but must not invent a format: a wrong declared Format is what breaks playback.
+/// </summary>
+public record YotoTranscodeResult(
+    string Sha256,
+    string? Format,
+    double? Duration,
+    long? FileSize
+);
+
 // --- Icons ---
 
 public record YotoPublicIcon(

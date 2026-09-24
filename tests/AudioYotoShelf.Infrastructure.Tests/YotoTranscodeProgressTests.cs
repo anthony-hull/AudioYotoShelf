@@ -105,9 +105,9 @@ public class YotoTranscodeProgressTests
             """{"upload":{"uploadUrl":"https://upload.example/x","uploadId":"upload-1"}}""", Transcoding(40), Finished);
         using var audio = new MemoryStream([1, 2, 3]);
 
-        var sha = await sut.UploadAndTranscodeAsync("token", audio, 3, "audio/mpeg");
+        var result = await sut.UploadAndTranscodeAsync("token", audio, 3, "audio/mpeg");
 
-        sha.Should().Be("abc123");
+        result.Sha256.Should().Be("abc123");
     }
 
     [Fact]

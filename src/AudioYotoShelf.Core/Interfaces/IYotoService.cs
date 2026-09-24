@@ -27,7 +27,7 @@ public interface IYotoService
     /// 0-100 percentage, each time it changes.
     /// </summary>
     Task<YotoTranscodeResponse> PollTranscodeStatusAsync(string accessToken, string uploadId, IProgress<int>? progress = null, CancellationToken ct = default);
-    Task<string> UploadAndTranscodeAsync(string accessToken, Stream audioStream, long contentLength, string contentType, IProgress<int>? progress = null, CancellationToken ct = default);
+    Task<YotoTranscodeResult> UploadAndTranscodeAsync(string accessToken, Stream audioStream, long contentLength, string contentType, IProgress<int>? progress = null, CancellationToken ct = default);
 
     // Icons
     Task<YotoPublicIcon[]> GetPublicIconsAsync(string accessToken, CancellationToken ct = default);

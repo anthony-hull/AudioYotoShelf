@@ -430,19 +430,24 @@ public class TransferOrchestrator(
             // Check for existing SHA256 deduplication.
             // Scoped to the same user connection: Yoto media (yoto:#sha) is account-scoped and
             // AbsFileIno (inode) can collide across different Audiobookshelf servers.
-            var existingSha = await db.TrackMappings
+            var existing = await db.TrackMappings
                 .Where(tm => tm.AbsFileIno == mapping.AbsFileIno &&
                              tm.YotoTranscodedSha256 != null &&
                              tm.Id != mapping.Id &&
                              tm.CardTransfer.UserConnectionId == transfer.UserConnectionId)
-                .Select(tm => tm.YotoTranscodedSha256)
+                .Select(tm => new { tm.YotoTranscodedSha256, tm.TranscodedFormat, tm.TranscodedDuration, tm.TranscodedFileSize })
                 .FirstOrDefaultAsync(ct);
 
-            if (existingSha is not null)
+            if (existing is not null)
             {
                 logger.LogInformation("Reusing existing SHA256 for track {FileIno}", mapping.AbsFileIno);
-                mapping.YotoTranscodedSha256 = existingSha;
-                mapping.YotoTrackUrl = $"yoto:#{existingSha}";
+                mapping.YotoTranscodedSha256 = existing.YotoTranscodedSha256;
+                mapping.YotoTrackUrl = $"yoto:#{existing.YotoTranscodedSha256}";
+                // Carried from the row this was matched against — Format especially, since a wrong
+                // declared Format (not what Yoto actually transcoded) is what breaks playback.
+                mapping.TranscodedFormat = existing.TranscodedFormat;
+                mapping.TranscodedDuration = existing.TranscodedDuration;
+                mapping.TranscodedFileSize = existing.TranscodedFileSize;
                 ReportTrack(TrackPhase.Reused, null, $"Track {i + 1}/{mappings.Count} is already on Yoto");
                 continue;
             }
@@ -470,7 +475,7 @@ public class TransferOrchestrator(
 
             try
             {
-                var sha256 = await yotoService.UploadAndTranscodeAsync(
+                var result = await yotoService.UploadAndTranscodeAsync(
                     yotoAccessToken, audioStream, contentLength, contentType,
                     new InlineProgress<int>(p =>
                     {
@@ -482,8 +487,11 @@ public class TransferOrchestrator(
                     }),
                     ct);
 
-                mapping.YotoTranscodedSha256 = sha256;
-                mapping.YotoTrackUrl = $"yoto:#{sha256}";
+                mapping.YotoTranscodedSha256 = result.Sha256;
+                mapping.YotoTrackUrl = $"yoto:#{result.Sha256}";
+                mapping.TranscodedFormat = result.Format;
+                mapping.TranscodedDuration = result.Duration;
+                mapping.TranscodedFileSize = result.FileSize;
                 await db.SaveChangesAsync(ct);
                 ReportTrack(TrackPhase.Uploaded, null, $"Track {i + 1}/{mappings.Count} is on Yoto");
             }
@@ -616,7 +624,11 @@ public class TransferOrchestrator(
                         Key: $"{(i + 1):D2}01",
                         Title: mapping.ChapterTitle,
                         TrackUrl: mapping.YotoTrackUrl ?? "",
-                        Format: "aac",
+                        // What Yoto actually transcoded to, not what we declared on upload — a mismatch
+                        // (declaring "aac" for audio Yoto kept as opus) plays for a couple of seconds
+                        // then fails on the device. "aac" is the fallback for a row from before this was
+                        // tracked; it matches the extracted-chapter path, which historically was the only one.
+                        Format: mapping.TranscodedFormat ?? "aac",
                         Type: "audio",
                         Duration: mapping.TranscodedDuration ?? (mapping.EndTime - mapping.StartTime),
                         FileSize: mapping.TranscodedFileSize ?? mapping.FileSizeBytes,

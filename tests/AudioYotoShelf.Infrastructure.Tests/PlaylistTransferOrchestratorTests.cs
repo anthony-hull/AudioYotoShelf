@@ -33,7 +33,7 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
         _yotoService.Setup(s => s.UploadAndTranscodeAsync(
                 It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
                 It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync("sha-123");
+            .ReturnsAsync(new YotoTranscodeResult("sha-123", null, null, null));
         _yotoService.Setup(s => s.UploadCustomIconAsync(
                 It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(TestData.CreateYotoIconUpload());
