@@ -345,7 +345,7 @@ public partial class TransferOrchestratorTests
             .Returns(async () =>
             {
                 await Snapshot("upload");
-                return "sha";
+                return new YotoTranscodeResult("sha", null, null, null);
             });
         _iconService.Setup(s => s.GenerateChapterIconAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))

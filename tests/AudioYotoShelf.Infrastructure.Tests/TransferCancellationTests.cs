@@ -1,3 +1,4 @@
+using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
@@ -90,7 +91,7 @@ public class TransferCancellationTests : IDisposable
             .Returns(async () =>
             {
                 await CancelAsync(transfer); // the person presses Cancel while track 1 is with Yoto
-                return "sha";
+                return new YotoTranscodeResult("sha", null, null, null);
             });
 
         var act = () => _sut.UploadTracksAsync(Token, tracks, [], transfer, CancellationToken.None);
@@ -120,7 +121,7 @@ public class TransferCancellationTests : IDisposable
         _yoto.Setup(y => y.UploadAndTranscodeAsync(
                 Token, It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
                 It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync("sha");
+            .ReturnsAsync(new YotoTranscodeResult("sha", null, null, null));
 
         await _sut.UploadTracksAsync(Token, tracks, [], transfer, CancellationToken.None);
 
@@ -137,7 +138,7 @@ public class TransferCancellationTests : IDisposable
         _yoto.Setup(y => y.UploadAndTranscodeAsync(
                 Token, It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
                 It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync("sha");
+            .ReturnsAsync(new YotoTranscodeResult("sha", null, null, null));
 
         await _sut.UploadTracksAsync(Token, tracks, [], transfer, CancellationToken.None);
 

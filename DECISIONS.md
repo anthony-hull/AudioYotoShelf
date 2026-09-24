@@ -2,6 +2,46 @@
 
 Architectural decisions and hard-won constraints for the homelab fork. Grep this before touching an area.
 
+## 2026-09-24 — A track's declared Format must match what Yoto actually transcoded it to
+
+**Decision.** `TrackMapping` gains `TranscodedFormat`, alongside the existing (also previously unused)
+`TranscodedDuration`/`TranscodedFileSize`. `YotoService.UploadAndTranscodeAsync` now returns a
+`YotoTranscodeResult` (Sha256, Format, Duration, FileSize) instead of a bare SHA256 string, reading
+Yoto's own `transcodedInfo` object, which the response parser used to discard entirely
+(`TranscodedInfo: null`, hardcoded). Both orchestrators declare a track's `Format` as
+`mapping.TranscodedFormat ?? "aac"` / `result.Format ?? "aac"` — the real value, falling back to the
+historical hardcode only when Yoto reports none. The SHA-reuse dedup path in `TransferOrchestrator`
+now also copies `TranscodedFormat`/`Duration`/`FileSize` from the matched row, not just the SHA and URL.
+
+**Why the 2026-09-23 fix (above) did not fix the reported bug.** That entry's diagnosis does not hold up:
+querying Yoto's own transcode API directly for the post-fix upload showed `inputFormat: "ogg"` detected
+correctly and `duration: 1970` — Yoto sniffs the real format from the bytes, it does not trust the
+declared upload `Content-Type`. The new card's chapter-1 track resolved to the *identical* `yoto:#hash`
+as the original broken card, meaning both point at the same underlying audio — proving that audio was
+never corrupted, and confirmed live: the user reported the new card skipped exactly the same way. That
+content-type fix is kept (it is still more honest than a hardcoded lie, and cannot be the cause of
+anything), but it is not what this entry's testing was verifying.
+
+**The real cause, found by elimination and confirmed live.** `CreateYotoCardAsync` /
+`BuildBookChapterAsync` hardcoded every track's `Format` as `"aac"`, regardless of what Yoto's
+transcoder actually produced. For this book Yoto chose `"codec":"opus","format":"opus"` (verified via
+`GET /media/upload/{uploadId}/transcoded`) — a genuine mismatch between the declared and real format.
+**Confirmed by a minimal live test**: a throwaway one-track card pointing at the exact same
+`yoto:#hash` played correctly when declared `"opus"`, having skipped after ~1s when the original card
+declared `"aac"`. Same audio, only the declared format changed.
+
+**What this does not cover.** Cards created before this fix (including the throwaway test card and
+`9h2Nk`, already deleted) still declare the wrong format and need re-transferring, same as the
+temp-file fix above. `PlaylistTransferOrchestrator`'s reuse path was not touched — it has none; every
+playlist transfer uploads fresh.
+
+**Found while testing, not fixed here.** `UploadTracksAsync`'s SHA-reuse branch (and the code it
+extends) sets the mapping's properties but does not call `SaveChangesAsync` itself — it relies on
+`TransferBookAsync`'s later save, which is the only real caller today. A test that called
+`UploadTracksAsync` in isolation and read back via a fresh context saw stale (null) values until it
+added the save itself, matching what the real pipeline always does. Not a live bug; worth knowing
+before adding a second caller.
+
 ## 2026-09-23 — A downloaded track is uploaded to Yoto as the content type Audiobookshelf served it as
 
 **Decision.** `TransferOrchestrator.DownloadToFileAsync` now downloads through `DownloadAudioFileWithMetadataAsync`

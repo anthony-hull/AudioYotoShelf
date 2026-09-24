@@ -78,6 +78,7 @@ public class TrackMappingConfiguration : IEntityTypeConfiguration<TrackMapping>
         builder.Property(x => x.YotoUploadId).HasMaxLength(256);
         builder.Property(x => x.YotoTranscodedSha256).HasMaxLength(256);
         builder.Property(x => x.YotoTrackUrl).HasMaxLength(2048);
+        builder.Property(x => x.TranscodedFormat).HasMaxLength(32);
 
         builder.HasOne(x => x.CardTransfer)
             .WithMany(x => x.TrackMappings)

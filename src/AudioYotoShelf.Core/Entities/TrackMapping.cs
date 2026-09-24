@@ -23,6 +23,10 @@ public class TrackMapping : BaseEntity
     public string? YotoTrackUrl { get; set; }
     public double? TranscodedDuration { get; set; }
     public long? TranscodedFileSize { get; set; }
+    /// <summary>What Yoto actually transcoded the audio to (e.g. "opus", "aac"), not what we declared
+    /// on upload. The card's track <c>Format</c> must match this, or the Yoto player fails to decode
+    /// the track after a couple of seconds. Null on a row from before this was tracked.</summary>
+    public string? TranscodedFormat { get; set; }
 
     // Icon for this chapter
     public Guid? GeneratedIconId { get; set; }

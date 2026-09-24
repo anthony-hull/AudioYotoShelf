@@ -84,7 +84,9 @@ public partial class TransferOrchestratorTests : IDisposable
         _yotoService.Setup(s => s.UploadAndTranscodeAsync(
                 It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<long>(), It.IsAny<string>(),
                 It.IsAny<IProgress<int>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync("sha256_test_hash");
+            // Format/Duration/FileSize null by default: most tests don't care, and CreateYotoCardAsync's
+            // "aac" fallback then applies, same as before this was tracked. Tests that do care override this.
+            .ReturnsAsync(new YotoTranscodeResult("sha256_test_hash", null, null, null));
 
         _yotoService.Setup(s => s.UploadCustomIconAsync(
                 It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

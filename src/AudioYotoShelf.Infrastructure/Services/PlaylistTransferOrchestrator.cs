@@ -150,17 +150,20 @@ public class PlaylistTransferOrchestrator(
             {
                 var length = new FileInfo(piece.Path).Length;
                 await using var stream = File.OpenRead(piece.Path);
-                var sha = await yotoService.UploadAndTranscodeAsync(
+                var result = await yotoService.UploadAndTranscodeAsync(
                     yotoToken, stream, length, ContentTypeFor(piece.Path), null, ct);
 
                 yotoTracks.Add(new YotoTrack(
                     Key: $"{chapterIndex:D2}{trackNumber:D2}",
                     Title: piece.Title,
-                    TrackUrl: $"yoto:#{sha}",
-                    Format: "aac",
+                    TrackUrl: $"yoto:#{result.Sha256}",
+                    // What Yoto actually transcoded to; a declared Format that doesn't match plays for
+                    // a couple of seconds then fails on the device. "aac" is the fallback for the rare
+                    // case Yoto's response carries no transcodedInfo at all.
+                    Format: result.Format ?? "aac",
                     Type: "audio",
-                    Duration: piece.DurationSeconds,
-                    FileSize: length,
+                    Duration: result.Duration ?? piece.DurationSeconds,
+                    FileSize: result.FileSize ?? length,
                     Channels: "stereo",
                     Display: display));
                 trackNumber++;

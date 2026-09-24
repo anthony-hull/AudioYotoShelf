@@ -361,10 +361,31 @@ public class YotoService(
         var (phase, percent) = ReadYotoProgress(node);
         return new YotoTranscodeResponse(
             Str("transcodedSha256"),
-            TranscodedInfo: null,
+            ReadTranscodedInfo(node),
             Str("status") ?? Str("transcodeStatus"),
             phase,
             percent);
+    }
+
+    /// <summary>
+    /// What Yoto actually produced — duration, size, channels and (critically) the real codec/format,
+    /// which does not always match what we declared on upload. Absent, or missing any one field, counts
+    /// as no info at all: a caller falling back to its own default is safer than one field being wrong.
+    /// </summary>
+    private static YotoTranscodedInfo? ReadTranscodedInfo(JsonElement node)
+    {
+        if (!node.TryGetProperty("transcodedInfo", out var info) || info.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var hasDuration = info.TryGetProperty("duration", out var duration) && duration.ValueKind == JsonValueKind.Number;
+        var hasFileSize = info.TryGetProperty("fileSize", out var fileSize) && fileSize.ValueKind == JsonValueKind.Number;
+        var channels = info.TryGetProperty("channels", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+        var format = info.TryGetProperty("format", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
+
+        if (!hasDuration || !hasFileSize || channels is null || format is null)
+            return null;
+
+        return new YotoTranscodedInfo(duration.GetDouble(), fileSize.GetInt64(), channels, format);
     }
 
     /// <summary>Yoto reports how far it has got under <c>progress: { phase, percent }</c>.</summary>
@@ -385,7 +406,7 @@ public class YotoService(
     }
 
 
-    public async Task<string> UploadAndTranscodeAsync(
+    public async Task<YotoTranscodeResult> UploadAndTranscodeAsync(
         string accessToken, Stream audioStream, long contentLength, string contentType,
         IProgress<int>? progress = null, CancellationToken ct = default)
     {
@@ -405,7 +426,8 @@ public class YotoService(
             ct);
 
         progress?.Report(YotoUploadProgress.Complete);
-        return transcodeResult.TranscodedSha256!;
+        var info = transcodeResult.TranscodedInfo;
+        return new YotoTranscodeResult(transcodeResult.TranscodedSha256!, info?.Format, info?.Duration, info?.FileSize);
     }
 
     // --- Icons ---
