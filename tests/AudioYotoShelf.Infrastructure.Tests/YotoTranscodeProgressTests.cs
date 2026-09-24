@@ -61,6 +61,56 @@ public class YotoTranscodeProgressTests
     }
 
     [Fact]
+    public async Task Poll_ReturnsYotosOwnPhaseAndPercentOnTheFinishedResponse()
+    {
+        var sut = CreateSut(Finished);
+
+        var result = await sut.PollTranscodeStatusAsync("token", UploadId);
+
+        (result.Phase, result.Percent).Should().Be(("complete", 100));
+    }
+
+    [Theory]
+    [InlineData("""{"transcode":{"progress":"soon"}}""")]                       // progress is not an object
+    [InlineData("""{"transcode":{"progress":null}}""")]
+    [InlineData("""{"transcode":{"progress":{"phase":"transcoding"}}}""")]      // no percent yet
+    [InlineData("""{"transcode":{"progress":{"percent":"half"}}}""")]           // not a number
+    [InlineData("""{"transcode":{"progress":{"phase":7,"percent":null}}}""")]   // wrong types
+    public async Task Poll_AProgressYotoHasNotFilledInProperly_ReportsNothingAndKeepsWaiting(string body)
+    {
+        var progress = new RecordingProgress();
+        var sut = CreateSut(body, Finished);
+
+        var result = await sut.PollTranscodeStatusAsync("token", UploadId, progress);
+
+        progress.Reports.Should().BeEmpty();
+        result.TranscodedSha256.Should().Be("abc123");
+    }
+
+    [Fact]
+    public async Task Poll_ANumberWithADecimalPart_IsRoundedToAWholePercent()
+    {
+        var progress = new RecordingProgress();
+        var sut = CreateSut("""{"transcode":{"progress":{"phase":"transcoding","percent":54.6}}}""", Finished);
+
+        await sut.PollTranscodeStatusAsync("token", UploadId, progress);
+
+        progress.Reports.Should().Equal(55);
+    }
+
+    [Fact]
+    public async Task UploadAndTranscode_WorksWithoutAProgressListener()
+    {
+        var sut = CreateSut(
+            """{"upload":{"uploadUrl":"https://upload.example/x","uploadId":"upload-1"}}""", Transcoding(40), Finished);
+        using var audio = new MemoryStream([1, 2, 3]);
+
+        var result = await sut.UploadAndTranscodeAsync("token", audio, 3, "audio/mpeg");
+
+        result.Sha256.Should().Be("abc123");
+    }
+
+    [Fact]
     public async Task Poll_WorksWithoutAProgressListener()
     {
         var sut = CreateSut(Transcoding(50), Finished);

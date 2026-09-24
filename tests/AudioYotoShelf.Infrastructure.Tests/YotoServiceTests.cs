@@ -44,7 +44,8 @@ public class YotoServiceTests
         query["response_type"].Should().Be("code");
         query["client_id"].Should().Be("client-1");
         query["redirect_uri"].Should().Be("https://app.example/callback");
-        query["scope"].Should().Be("profile offline_access openid");
+        query["scope"].Should().Be(
+            "profile offline_access openid user:content:manage user:content:view user:icons:manage");
         query["audience"].Should().Be(ApiBase);
         query["state"].Should().Be("state-1");
     }
@@ -712,6 +713,56 @@ public class YotoServiceTests
     }
 
     [Fact]
+    public async Task PollTranscodeStatusAsync_ReadsTranscodedInfo_SoTheCardCanDeclareWhatYotoActuallyMade()
+    {
+        // A card whose track Format doesn't match what Yoto really transcoded to fails on the
+        // player after a couple of seconds — this is the data that lets the caller get it right.
+        _handler.Enqueue(HttpStatusCode.OK, """
+            {"transcode":{"transcodedSha256":"sha-1","status":"complete",
+             "transcodedInfo":{"duration":1970.4,"fileSize":16898819,"channels":"stereo","format":"opus"}}}
+            """);
+
+        var result = await CreateSut().PollTranscodeStatusAsync(Token, "up-1");
+
+        result.TranscodedInfo.Should().Be(new YotoTranscodedInfo(1970.4, 16898819, "stereo", "opus"));
+    }
+
+    [Fact]
+    public async Task PollTranscodeStatusAsync_TranscodedInfoThatIsNotAnObject_IsTreatedAsAbsent()
+    {
+        _handler.Enqueue(HttpStatusCode.OK, """{"transcodedSha256":"sha-1","status":"complete","transcodedInfo":"not an object"}""");
+
+        var result = await CreateSut().PollTranscodeStatusAsync(Token, "up-1");
+
+        result.TranscodedInfo.Should().BeNull();
+    }
+
+    public static TheoryData<string, string> TranscodedInfoMissingOrWrongTypeFields => new()
+    {
+        // Partial or wrong-typed info is worse than none: falling back to the caller's own default is
+        // safer than reporting an object with a silently-wrong field (e.g. Format defaulting to "").
+        { "duration missing", """{"fileSize":16898819,"channels":"stereo","format":"opus"}""" },
+        { "duration wrong type", """{"duration":"long","fileSize":16898819,"channels":"stereo","format":"opus"}""" },
+        { "fileSize missing", """{"duration":1970.4,"channels":"stereo","format":"opus"}""" },
+        { "fileSize wrong type", """{"duration":1970.4,"fileSize":"big","channels":"stereo","format":"opus"}""" },
+        { "channels missing", """{"duration":1970.4,"fileSize":16898819,"format":"opus"}""" },
+        { "channels wrong type", """{"duration":1970.4,"fileSize":16898819,"channels":2,"format":"opus"}""" },
+        { "format missing", """{"duration":1970.4,"fileSize":16898819,"channels":"stereo"}""" },
+        { "format wrong type", """{"duration":1970.4,"fileSize":16898819,"channels":"stereo","format":7}""" },
+    };
+
+    [Theory]
+    [MemberData(nameof(TranscodedInfoMissingOrWrongTypeFields))]
+    public async Task PollTranscodeStatusAsync_TranscodedInfoMissingOrWrongTypeInOneField_IsTreatedAsAbsent(string because, string infoJson)
+    {
+        _handler.Enqueue(HttpStatusCode.OK, $$"""{"transcodedSha256":"sha-1","status":"complete","transcodedInfo":{{infoJson}}}""");
+
+        var result = await CreateSut().PollTranscodeStatusAsync(Token, "up-1");
+
+        result.TranscodedInfo.Should().BeNull(because);
+    }
+
+    [Fact]
     public async Task PollTranscodeStatusAsync_NonStringFieldsCountAsAbsent()
     {
         _handler.Enqueue(HttpStatusCode.OK, """{"transcodedSha256":5,"status":{}}""");
@@ -761,9 +812,9 @@ public class YotoServiceTests
         var progress = new RecordingProgress();
         using var stream = new MemoryStream(Payload);
 
-        var sha = await CreateSut().UploadAndTranscodeAsync(Token, stream, Payload.Length, "audio/mp4", progress);
+        var result = await CreateSut().UploadAndTranscodeAsync(Token, stream, Payload.Length, "audio/mp4", progress);
 
-        sha.Should().Be("sha-1");
+        result.Sha256.Should().Be("sha-1");
         _handler.Requests.Select(r => (r.Method.Method, r.Uri)).Should().Equal(
             ("GET", $"{ApiBase}/media/transcode/audio/uploadUrl"),
             ("PUT", "https://s3.example/put"),
@@ -781,7 +832,7 @@ public class YotoServiceTests
         _handler.Enqueue(HttpStatusCode.OK, PollDoneJson);
         using var stream = new MemoryStream(Payload);
 
-        (await CreateSut().UploadAndTranscodeAsync(Token, stream, Payload.Length, "audio/mp4")).Should().Be("sha-1");
+        (await CreateSut().UploadAndTranscodeAsync(Token, stream, Payload.Length, "audio/mp4")).Sha256.Should().Be("sha-1");
     }
 
     // =========================================================================
