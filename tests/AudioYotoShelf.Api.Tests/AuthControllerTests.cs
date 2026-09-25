@@ -130,7 +130,9 @@ public class AuthControllerTests : IDisposable
 
         var result = await sut.StartAbsSso(CancellationToken.None);
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+        // Says what to set, since the person reading it is whoever runs the server.
+        result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().BeOfType<string>()
+            .Which.Should().Contain("Audiobookshelf:Url");
     }
 
     [Fact]
@@ -234,7 +236,7 @@ public class AuthControllerTests : IDisposable
 
         var result = await sut.AbsSsoCallback(code, state, CancellationToken.None);
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+        result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().Be("Missing code or state");
     }
 
     [Fact]
@@ -327,7 +329,8 @@ public class AuthControllerTests : IDisposable
 
         await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
 
-        sut.Response.Headers.SetCookie.ToString().Should().Contain($"{SsoCookieName}=;");
+        // The path matters: a cookie is only removed when deleted at the path it was set at.
+        sut.Response.Headers.SetCookie.ToString().Should().Contain($"{SsoCookieName}=;").And.Contain("path=/api/auth/abs/sso");
     }
 
     [Fact]
@@ -393,7 +396,8 @@ public class AuthControllerTests : IDisposable
 
         var result = await sut.AbsSsoCallback("code-1", "st-1", CancellationToken.None);
 
-        result.Should().BeOfType<BadRequestObjectResult>();
+        result.Should().BeOfType<BadRequestObjectResult>().Which.Value.Should().BeOfType<string>()
+            .Which.Should().Contain("Audiobookshelf:Url");
     }
 
     // =========================================================================
@@ -496,7 +500,7 @@ public class AuthControllerTests : IDisposable
     // Mutation-testing additions — the connect flow, admin grants, sessions and token/OAuth state
     // =========================================================================
 
-    private const string AbsUrl = "http://abs.home";
+    private const string ConnectAbsUrl = "http://abs.home";
     private const string ApiKey = "key-123";
 
     /// <summary>Everything a connect test needs to see: the controller, what was signed in, and the ABS mock.</summary>
@@ -527,6 +531,7 @@ public class AuthControllerTests : IDisposable
             abs.Object,
             yoto ?? Mock.Of<IYotoService>(),
             _db,
+            _flows.Object,
             new ConfigurationBuilder().AddInMemoryCollection(settings).Build(),
             Mock.Of<ILogger<AuthController>>())
         {
@@ -544,7 +549,7 @@ public class AuthControllerTests : IDisposable
     }
 
     private static Dictionary<string, string?> Settings(
-        string? configuredUrl = AbsUrl, string? adminUrl = null, string? adminUsers = null, string? envAdminUsers = null) =>
+        string? configuredUrl = ConnectAbsUrl, string? adminUrl = null, string? adminUsers = null, string? envAdminUsers = null) =>
         new()
         {
             ["Audiobookshelf:Url"] = configuredUrl,
@@ -569,12 +574,12 @@ public class AuthControllerTests : IDisposable
     // ---- which server a request may reach ----
 
     [Theory]
-    [InlineData(AbsUrl, null, AbsUrl)]                       // none supplied: use the configured server
-    [InlineData(AbsUrl, "", AbsUrl)]
-    [InlineData(AbsUrl, "   ", AbsUrl)]
-    [InlineData(AbsUrl, AbsUrl, AbsUrl)]
-    [InlineData(AbsUrl, "HTTP://ABS.HOME/", AbsUrl)]         // case and trailing slash do not matter
-    [InlineData("http://abs.home/", null, AbsUrl)]           // configured value is normalised too
+    [InlineData(ConnectAbsUrl, null, ConnectAbsUrl)]                       // none supplied: use the configured server
+    [InlineData(ConnectAbsUrl, "", ConnectAbsUrl)]
+    [InlineData(ConnectAbsUrl, "   ", ConnectAbsUrl)]
+    [InlineData(ConnectAbsUrl, ConnectAbsUrl, ConnectAbsUrl)]
+    [InlineData(ConnectAbsUrl, "HTTP://ABS.HOME/", ConnectAbsUrl)]         // case and trailing slash do not matter
+    [InlineData("http://abs.home/", null, ConnectAbsUrl)]           // configured value is normalised too
     [InlineData("  ", "http://other.example/", "http://other.example")]   // blank config = not locked
     [InlineData(null, "http://other.example/", "http://other.example")]
     public async Task Connect_ResolvesTheServerToContact(string? configured, string? requested, string expectedBaseUrl)
@@ -625,7 +630,7 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(existing);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(token: "should-not-be-used", refreshToken: "should-not-be-used"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(token: "should-not-be-used", refreshToken: "should-not-be-used"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -638,7 +643,7 @@ public class AuthControllerTests : IDisposable
     public async Task Connect_WithPassword_StoresTheSessionTokenFromTheLogin()
     {
         var rig = CreateRig(Settings());
-        rig.Abs.Setup(s => s.LoginAsync(AbsUrl, "alice", "secret", It.IsAny<CancellationToken>()))
+        rig.Abs.Setup(s => s.LoginAsync(ConnectAbsUrl, "alice", "secret", It.IsAny<CancellationToken>()))
             .ReturnsAsync(LoginResponse(token: "session-token", refreshToken: "refresh-1"));
 
         await rig.Controller.ConnectToAudiobookshelf(
@@ -655,12 +660,12 @@ public class AuthControllerTests : IDisposable
     public async Task Connect_NewUser_IsCreatedWithTheirServerAndDefaultLibrary()
     {
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-9"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-9"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
         var saved = FreshDb().UserConnections.Single();
-        (saved.Username, saved.AudiobookshelfUrl, saved.DefaultLibraryId).Should().Be(("alice", AbsUrl, "lib-9"));
+        (saved.Username, saved.AudiobookshelfUrl, saved.DefaultLibraryId).Should().Be(("alice", ConnectAbsUrl, "lib-9"));
     }
 
     [Fact]
@@ -671,12 +676,12 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(existing);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-new"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-new"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
         var saved = FreshDb().UserConnections.Single();
-        (saved.Id, saved.AudiobookshelfUrl, saved.DefaultLibraryId).Should().Be((existing.Id, AbsUrl, "lib-new"));
+        (saved.Id, saved.AudiobookshelfUrl, saved.DefaultLibraryId).Should().Be((existing.Id, ConnectAbsUrl, "lib-new"));
     }
 
     [Fact]
@@ -687,7 +692,7 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(existing);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice", defaultLibraryId: null));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice", defaultLibraryId: null));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -701,7 +706,7 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(bob);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -717,7 +722,7 @@ public class AuthControllerTests : IDisposable
         _db.UserConnections.Add(yotoUser);
         await _db.SaveChangesAsync();
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-1"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice", defaultLibraryId: "lib-1"));
 
         var result = await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -737,7 +742,7 @@ public class AuthControllerTests : IDisposable
     public async Task Connect_NewUser_IsReportedAsNotConnectedToYoto()
     {
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse());
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse());
 
         var result = await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -751,7 +756,7 @@ public class AuthControllerTests : IDisposable
     public async Task Connect_IssuesACookieSessionForThatUser_WithoutTheAdminRole()
     {
         var rig = CreateRig(Settings());
-        ExpectApiKeyLogin(rig, AbsUrl, LoginResponse(username: "alice"));
+        ExpectApiKeyLogin(rig, ConnectAbsUrl, LoginResponse(username: "alice"));
 
         await rig.Controller.ConnectToAudiobookshelf(KeyRequest(), CancellationToken.None);
 
@@ -856,7 +861,7 @@ public class AuthControllerTests : IDisposable
         string? refreshToken = null, DateTimeOffset? tokenExpiry = null)
     {
         var user = TestData.CreateUserConnection(
-            username: "alice", absUrl: AbsUrl, absToken: "tok", absRefreshToken: refreshToken, absTokenExpiry: tokenExpiry);
+            username: "alice", absUrl: ConnectAbsUrl, absToken: "tok", absRefreshToken: refreshToken, absTokenExpiry: tokenExpiry);
         user.AudiobookshelfTokenValidatedAt = DateTimeOffset.UtcNow.AddDays(-1);
         _db.UserConnections.Add(user);
         await _db.SaveChangesAsync();
@@ -876,7 +881,7 @@ public class AuthControllerTests : IDisposable
     {
         var user = await AddAbsUser();
         var rig = CreateRig(Settings(), user: PrincipalFor(user.Id));
-        rig.Abs.Setup(s => s.ValidateTokenAsync(AbsUrl, "tok", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        rig.Abs.Setup(s => s.ValidateTokenAsync(ConnectAbsUrl, "tok", It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var result = await rig.Controller.ValidateAbsToken(CancellationToken.None);
 
@@ -891,7 +896,7 @@ public class AuthControllerTests : IDisposable
         var user = await AddAbsUser();
         var before = user.AudiobookshelfTokenValidatedAt;
         var rig = CreateRig(Settings(), user: PrincipalFor(user.Id));
-        rig.Abs.Setup(s => s.ValidateTokenAsync(AbsUrl, "tok", It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        rig.Abs.Setup(s => s.ValidateTokenAsync(ConnectAbsUrl, "tok", It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
         var result = await rig.Controller.ValidateAbsToken(CancellationToken.None);
 
@@ -904,7 +909,7 @@ public class AuthControllerTests : IDisposable
     {
         var user = await AddAbsUser(refreshToken: "refresh", tokenExpiry: DateTimeOffset.UtcNow.AddMinutes(-1));
         var rig = CreateRig(Settings(), user: PrincipalFor(user.Id));
-        rig.Abs.Setup(s => s.RefreshTokenAsync(AbsUrl, "refresh", It.IsAny<CancellationToken>()))
+        rig.Abs.Setup(s => s.RefreshTokenAsync(ConnectAbsUrl, "refresh", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("revoked"));
 
         var result = await rig.Controller.ValidateAbsToken(CancellationToken.None);
