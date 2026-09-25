@@ -247,10 +247,6 @@ public class YotoService(
     protected virtual Task DelayBetweenUploadAttemptsAsync(int attempt, CancellationToken ct) =>
         Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt)), ct);
 
-    // Seam for tests: 5s between transcode polls in production; overridden to no-op in unit tests.
-    protected virtual Task DelayBetweenTranscodePollsAsync(CancellationToken ct) =>
-        Task.Delay(TranscodePollDelayMs, ct);
-
     /// <summary>
     /// A reset/closed connection during the request-body write throws HttpRequestException
     /// wrapping IOException → SocketException (broken pipe / connection reset). These are safe
