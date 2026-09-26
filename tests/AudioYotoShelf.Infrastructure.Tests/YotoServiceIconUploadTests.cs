@@ -18,7 +18,10 @@ public class YotoServiceIconUploadTests
         // "A binary image file is required" even for a real, valid image, so this pins the
         // request shape that actually works — a raw body with Content-Type: image/png, the
         // same shape UploadCoverImageAsync already uses for the cover endpoint.
-        var handler = new CapturingHandler("""{"mediaId":"icon-1","url":"https://i.example/icon-1.png"}""");
+        // The response body is nested under "displayIcon" (confirmed live) — not a flat
+        // { mediaId, url } shape, which is what let a null MediaId slip through undetected.
+        var handler = new CapturingHandler(
+            """{"displayIcon":{"mediaId":"icon-1","userId":"u1","displayIconId":"d1","url":"https://i.example/icon-1.png"}}""");
         var sut = CreateSut(handler);
         byte[] icon = [0x89, 0x50, 0x4E, 0x47];
 
