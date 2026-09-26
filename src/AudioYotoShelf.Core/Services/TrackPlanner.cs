@@ -36,9 +36,7 @@ public class TrackPlanner(YotoCardLimits limits) : ITrackPlanner
             // Multi-file book: each audio file is a track.
             return media.AudioFiles.OrderBy(f => f.Index).Select(f =>
             {
-                var title = media.Chapters.Length > f.Index
-                    ? media.Chapters[f.Index].Title
-                    : f.Metadata.Filename;
+                var title = ChapterTitleResolver.ForFile(media.Chapters, f);
                 return new SourceTrack(title, f.Duration, f.Size);
             }).ToList();
         }
