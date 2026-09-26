@@ -613,8 +613,11 @@ public partial class TransferOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task TransferBookAsync_AnotherUsersIdenticalIcon_IsNeverReused()
+    public async Task TransferBookAsync_AnotherUsersIdenticalIcon_ReusesThePixelsWithoutCallingGeminiAgain()
     {
+        // Yoto media references are account-scoped (can't reuse the first user's yoto:#id), so the
+        // second user still needs their own upload — but the Gemini generation itself is identical
+        // work for identical input, and paying for it twice is pure waste.
         var first = await SeedUserAsync("first");
         var second = await SeedUserAsync("second");
         ServeItem("book-a");
@@ -622,8 +625,13 @@ public partial class TransferOrchestratorTests : IDisposable
         await TransferAsync(first, "book-a");
         await TransferAsync(second, "book-a");
 
-        VerifyIconGenerations("Chapter 1", Times.Exactly(2));
-        (await _db.GeneratedIcons.Select(i => i.UserConnectionId).Distinct().CountAsync()).Should().Be(2);
+        VerifyIconGenerations("Chapter 1", Times.Once());
+        _yotoService.Verify(s => s.UploadCustomIconAsync(
+            It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+        var icons = await _db.GeneratedIcons.ToListAsync();
+        icons.Select(i => i.UserConnectionId).Distinct().Should().HaveCount(2);
+        icons.Should().OnlyContain(i => i.IconData != null, "cached pixels are what let the next user skip Gemini");
     }
 
     [Fact]
@@ -641,8 +649,10 @@ public partial class TransferOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task TransferBookAsync_StoredIconWithoutAYotoMediaId_IsRegenerated()
+    public async Task TransferBookAsync_StoredIconWithoutAYotoMediaId_IsReUploadedButNotRegeneratedViaGemini()
     {
+        // No valid Yoto reference to reuse directly, but the pixels are still cached from the first
+        // attempt, so the fix only needs a fresh upload — not another paid Gemini call.
         var user = await SeedUserAsync();
         ServeItem("book-a");
         ServeItem("book-b");
@@ -652,7 +662,10 @@ public partial class TransferOrchestratorTests : IDisposable
 
         await TransferAsync(user, "book-b");
 
-        VerifyIconGenerations("Chapter 1", Times.Exactly(2));
+        VerifyIconGenerations("Chapter 1", Times.Once());
+        _yotoService.Verify(s => s.UploadCustomIconAsync(
+            It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
     }
 
     [Fact]

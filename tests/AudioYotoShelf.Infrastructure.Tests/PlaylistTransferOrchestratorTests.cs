@@ -40,6 +40,9 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
         _iconService.Setup(s => s.GenerateChapterIconAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new byte[] { 0x89, 0x50, 0x4E, 0x47 });
+        // Vary by all three inputs so distinct books/genres hash distinctly (matches production prompt).
+        _iconService.Setup(s => s.BuildChapterIconPrompt(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>()))
+            .Returns((string chapterTitle, string bookTitle, string? genre) => $"prompt: {chapterTitle}|{bookTitle}|{genre}");
         _absService.Setup(s => s.DownloadAudioFileAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => new MemoryStream(new byte[100]));
@@ -61,9 +64,9 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
     }
 
     private async Task<Guid> SeedPlaylistAsync(PlaylistStatus status = PlaylistStatus.Draft,
-        TrackGrouping grouping = TrackGrouping.Chapters, params PlaylistItem[] items)
+        TrackGrouping grouping = TrackGrouping.Chapters, string username = "testuser", params PlaylistItem[] items)
     {
-        var user = TestData.CreateUserConnection();
+        var user = TestData.CreateUserConnection(username: username);
         _fixture.DbContext.UserConnections.Add(user);
 
         var playlist = new Playlist
