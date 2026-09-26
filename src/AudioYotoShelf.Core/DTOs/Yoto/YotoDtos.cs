@@ -120,7 +120,7 @@ public record YotoPublicIcon(
 
 public record YotoIconUploadResponse(
     string MediaId,
-    string Url
+    string? Url
 );
 
 // --- Cover ---
