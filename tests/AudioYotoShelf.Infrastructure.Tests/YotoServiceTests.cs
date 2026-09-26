@@ -898,6 +898,22 @@ public class YotoServiceTests
     }
 
     [Fact]
+    public async Task UploadCustomIconAsync_UrlComesBackAsAnEmptyObject_StillReturnsTheMediaId()
+    {
+        // Confirmed live 2026-09-26: Yoto sometimes returns "url": {} (an empty object, not a
+        // string) — presumably while autoConvert is still processing. Reading that with
+        // JsonElement.GetString() throws InvalidOperationException instead of returning null,
+        // which silently failed EVERY icon attach even though the upload itself, and the mediaId
+        // card creation actually needs, had both succeeded.
+        _handler.Enqueue(HttpStatusCode.OK,
+            """{"displayIcon":{"mediaId":"icon-1","userId":"u1","displayIconId":"d1","url":{}}}""");
+
+        var result = await CreateSut().UploadCustomIconAsync(Token, [1], "a.png");
+
+        result.Should().Be(new YotoIconUploadResponse("icon-1", null));
+    }
+
+    [Fact]
     public async Task UploadCustomIconAsync_AnEmptyBody_Throws()
     {
         _handler.Enqueue(HttpStatusCode.OK, "null");
