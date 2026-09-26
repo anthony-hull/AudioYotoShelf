@@ -129,8 +129,10 @@ public class TrackPlannerTests
     [Fact]
     public void Plan_MultiFile_TitlesTracksFromChaptersWhenPresent()
     {
+        // Audiobookshelf's AudioFile.Index is 1-based (confirmed live against a real book) —
+        // file 1 is the first file, and lines up with chapters[0].
         var media = TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(0), TestData.CreateAbsAudioFile(1)],
+            audioFiles: [TestData.CreateAbsAudioFile(1), TestData.CreateAbsAudioFile(2)],
             chapters:
             [
                 TestData.CreateAbsChapter(0, "Intro", 0, 300),
@@ -144,10 +146,10 @@ public class TrackPlannerTests
     public void Plan_MultiFile_FallsBackToFilenameWhenNoChapterMatchesTheFile()
     {
         var media = TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(0), TestData.CreateAbsAudioFile(1)],
+            audioFiles: [TestData.CreateAbsAudioFile(1), TestData.CreateAbsAudioFile(2)],
             chapters: [TestData.CreateAbsChapter(0, "Intro", 0, 300)]);
 
-        _sut.Plan(media).Select(t => t.Title).Should().Equal("Intro", "chapter1.mp3");
+        _sut.Plan(media).Select(t => t.Title).Should().Equal("Intro", "chapter2.mp3");
     }
 
     [Fact]

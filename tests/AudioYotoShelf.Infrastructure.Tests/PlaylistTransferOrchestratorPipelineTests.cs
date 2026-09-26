@@ -99,13 +99,15 @@ public partial class PlaylistTransferOrchestratorTests
     [Fact]
     public async Task TransferPlaylist_MultiFileBook_UploadsOneTrackPerFileInIndexOrderWithChapterTitles()
     {
+        // Audiobookshelf's AudioFile.Index is 1-based (confirmed live against a real book) —
+        // file 1 is the first file, and lines up with chapters[0].
         var uploads = CaptureUploads();
         var card = CaptureCard();
         var downloads = CaptureDownloadOrder();
         var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,
             items: [Item("book-1", 0, "First Book", [300, 400])]);
         SetupBook("book-1", TestData.CreateAbsMedia(
-            audioFiles: [TestData.CreateAbsAudioFile(1, "ino-b", 400), TestData.CreateAbsAudioFile(0, "ino-a", 300)],
+            audioFiles: [TestData.CreateAbsAudioFile(2, "ino-b", 400), TestData.CreateAbsAudioFile(1, "ino-a", 300)],
             chapters: [TestData.CreateAbsChapter(0, "Intro", 0, 300)]));
 
         await _sut.TransferPlaylistAsync(playlistId);
@@ -116,7 +118,7 @@ public partial class PlaylistTransferOrchestratorTests
         chapter.Tracks.Select(t => (t.Key, t.Title, t.TrackUrl, t.Duration, t.FileSize, t.Format, t.Type, t.Channels))
             .Should().Equal(
                 ("0101", "Intro", "yoto:#sha-123", 300.0, 100L, "aac", "audio", "stereo"),
-                ("0102", "chapter1.mp3", "yoto:#sha-123", 400.0, 100L, "aac", "audio", "stereo"));   // no chapter for file 1: filename
+                ("0102", "chapter2.mp3", "yoto:#sha-123", 400.0, 100L, "aac", "audio", "stereo"));   // no chapter for file 2: filename
         uploads.Select(u => u.ContentType).Should().Equal("audio/mpeg", "audio/mpeg");
         TempDirShouldBeEmpty();
     }
