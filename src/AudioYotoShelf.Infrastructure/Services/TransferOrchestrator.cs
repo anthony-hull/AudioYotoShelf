@@ -568,6 +568,7 @@ public class TransferOrchestrator(
                 // needs their own upload, but Gemini's output for identical input is reusable, so
                 // check for anyone else's cached pixels before paying for a fresh generation.
                 var cachedBytes = await FindCachedIconBytesAsync(contentHash, ct);
+                // Stryker disable once Equality : the condition only gates a log line
                 if (cachedBytes is not null)
                     logger.LogInformation("Reusing a cached icon for {Chapter} — no Gemini call", mapping.ChapterTitle);
                 var iconBytes = cachedBytes ?? await iconService.GenerateChapterIconAsync(

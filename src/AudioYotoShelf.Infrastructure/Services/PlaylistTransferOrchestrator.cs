@@ -292,7 +292,6 @@ public class PlaylistTransferOrchestrator(
             if (existing is not null)
             {
                 existing.TimesUsed++;
-                await db.SaveChangesAsync(ct);
                 return $"yoto:#{existing.YotoMediaId}";
             }
 
@@ -301,6 +300,7 @@ public class PlaylistTransferOrchestrator(
                 .OrderByDescending(g => g.CreatedAt)
                 .Select(g => g.IconData)
                 .FirstOrDefaultAsync(ct);
+            // Stryker disable once Equality : the condition only gates a log line
             if (cachedBytes is not null)
                 logger.LogInformation("Reusing a cached icon for book '{Title}' — no Gemini call", bookTitle);
             var iconBytes = cachedBytes ?? await iconService.GenerateChapterIconAsync(bookTitle, bookTitle, genre, ct);
@@ -320,7 +320,10 @@ public class PlaylistTransferOrchestrator(
                 ContentHash = contentHash,
                 TimesUsed = 1
             });
-            await db.SaveChangesAsync(ct);
+            // Not saved here — TransferPlaylistAsync's own SaveChangesAsync (success at line ~119,
+            // failure in the catch below it) always runs after this returns, and a query later in
+            // the same run (another book sharing this prompt) needs this Added-but-unsaved icon to
+            // already be visible on this DbContext regardless.
 
             return $"yoto:#{upload.MediaId}";
         }

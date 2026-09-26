@@ -2,6 +2,8 @@ using AudioYotoShelf.Core.DTOs.Audiobookshelf;
 using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
+using AudioYotoShelf.Core.Interfaces;
+using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Core.Tests.Helpers;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -423,6 +425,129 @@ public partial class PlaylistTransferOrchestratorTests
         _yotoService.Verify(s => s.UploadCustomIconAsync(
             It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
         TempDirShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_SameUserSecondTransfer_ReusesTheirOwnIconDirectlyAndCountsTheUse()
+    {
+        // Cheapest path: this user already has a Yoto media reference for this exact prompt, so
+        // neither Gemini nor a fresh upload is needed at all. The second transfer runs against a
+        // fresh DbContext (InMemoryDbFixture.NewContext), like a real second HTTP request would —
+        // reusing the same tracked context would find an added-but-unsaved row even if the first
+        // transfer never actually persisted it.
+        var media = TestData.CreateAbsMedia(
+            TestData.CreateAbsMetadata(genres: ["Fantasy"]),
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-a", 100)], chapters: []);
+        SetupBook("book-1", media);
+        SetupBook("book-2", media);
+        var user = TestData.CreateUserConnection(username: "repeat-user");
+        _fixture.DbContext.UserConnections.Add(user);
+        await _fixture.DbContext.SaveChangesAsync();
+        var card = CaptureCard();
+
+        var firstPlaylist = await SeedPlaylistAsync(existingUser: user, items: [Item("book-1", 0, "Same Book", [100])]);
+        await _sut.TransferPlaylistAsync(firstPlaylist);
+        var firstIconRef = card.Content!.Chapters.Single().Display!.Icon16X16;
+
+        var secondSut = CreateSut(_tempDir, _fixture.NewContext());
+        var secondPlaylist = await SeedPlaylistAsync(existingUser: user, items: [Item("book-2", 0, "Same Book", [100])]);
+        await secondSut.TransferPlaylistAsync(secondPlaylist);
+
+        _iconService.Verify(s => s.GenerateChapterIconAsync(
+            "Same Book", "Same Book", "Fantasy", It.IsAny<CancellationToken>()), Times.Once);
+        _yotoService.Verify(s => s.UploadCustomIconAsync(
+            It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        card.Content!.Chapters.Single().Display!.Icon16X16.Should().Be(firstIconRef);
+        (await _fixture.NewContext().GeneratedIcons.SingleAsync()).TimesUsed.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_CachedIconLookup_RequiresBothTheHashAndTheData()
+    {
+        // A row matching the hash but with no cached bytes, or holding bytes under a different
+        // hash, must never be treated as a hit for this prompt.
+        var media = TestData.CreateAbsMedia(
+            TestData.CreateAbsMetadata(genres: ["Fantasy"]),
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-a", 100)], chapters: []);
+        SetupBook("book-1", media);
+        var wantedHash = ContentHasher.Compute("prompt: Same Book|Same Book|Fantasy");
+        _fixture.DbContext.UserConnections.Add(TestData.CreateUserConnection(username: "other"));
+        await _fixture.DbContext.SaveChangesAsync();
+        var otherUserId = (await _fixture.DbContext.UserConnections.SingleAsync()).Id;
+        _fixture.DbContext.GeneratedIcons.AddRange(
+            new GeneratedIcon
+            {
+                UserConnectionId = otherUserId,
+                Prompt = "x",
+                ContextTitle = "x",
+                ContentHash = wantedHash,
+                IconData = null,
+                YotoMediaId = null,
+            },
+            new GeneratedIcon
+            {
+                UserConnectionId = otherUserId,
+                Prompt = "y",
+                ContextTitle = "y",
+                ContentHash = "a-different-hash",
+                IconData = [0xAA],
+                YotoMediaId = null,
+            });
+        await _fixture.DbContext.SaveChangesAsync();
+
+        var playlistId = await SeedPlaylistAsync(items: [Item("book-1", 0, "Same Book", [100])]);
+        await _sut.TransferPlaylistAsync(playlistId);
+
+        // Neither decoy matches: Gemini still has to run.
+        _iconService.Verify(s => s.GenerateChapterIconAsync(
+            "Same Book", "Same Book", "Fantasy", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TransferPlaylist_MultipleCachedIconsForTheSamePrompt_UsesTheMostRecentOnesBytes()
+    {
+        var media = TestData.CreateAbsMedia(
+            TestData.CreateAbsMetadata(genres: ["Fantasy"]),
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-a", 100)], chapters: []);
+        SetupBook("book-1", media);
+        var wantedHash = ContentHasher.Compute("prompt: Same Book|Same Book|Fantasy");
+        _fixture.DbContext.UserConnections.Add(TestData.CreateUserConnection(username: "other"));
+        await _fixture.DbContext.SaveChangesAsync();
+        var otherUserId = (await _fixture.DbContext.UserConnections.SingleAsync()).Id;
+        byte[] olderBytes = [0x01], newerBytes = [0x02];
+        _fixture.DbContext.GeneratedIcons.AddRange(
+            new GeneratedIcon
+            {
+                UserConnectionId = otherUserId,
+                Prompt = "x",
+                ContextTitle = "x",
+                ContentHash = wantedHash,
+                IconData = olderBytes,
+                CreatedAt = DateTimeOffset.UtcNow.AddDays(-1),
+            },
+            new GeneratedIcon
+            {
+                UserConnectionId = otherUserId,
+                Prompt = "x",
+                ContextTitle = "x",
+                ContentHash = wantedHash,
+                IconData = newerBytes,
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+        await _fixture.DbContext.SaveChangesAsync();
+        var uploads = CaptureUploads();
+
+        var playlistId = await SeedPlaylistAsync(items: [Item("book-1", 0, "Same Book", [100])]);
+        await _sut.TransferPlaylistAsync(playlistId);
+
+        // The icon upload — not the track upload — is the last one captured, and its bytes must
+        // come from the newer cached row.
+        _yotoService.Invocations
+            .Where(i => i.Method.Name == nameof(IYotoService.UploadCustomIconAsync))
+            .Select(i => (byte[])i.Arguments[1])
+            .Should().ContainSingle().Which.Should().Equal(newerBytes);
+        _iconService.Verify(s => s.GenerateChapterIconAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

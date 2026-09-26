@@ -5,6 +5,7 @@ using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
 using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Core.Tests.Helpers;
+using AudioYotoShelf.Infrastructure.Data;
 using AudioYotoShelf.Infrastructure.Services;
 using AudioYotoShelf.Infrastructure.Tests.Fixtures;
 using FluentAssertions;
@@ -48,8 +49,15 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
             .ReturnsAsync(() => new MemoryStream(new byte[100]));
     }
 
-    private PlaylistTransferOrchestrator CreateSut(string tempDirectory) => new(
-        _fixture.DbContext, _absService.Object, _yotoService.Object,
+    private PlaylistTransferOrchestrator CreateSut(string tempDirectory) => CreateSut(tempDirectory, _fixture.DbContext);
+
+    /// <summary>
+    /// A second call against <see cref="InMemoryDbFixture.NewContext"/> mimics a real second HTTP
+    /// request's own DbContext scope: it only sees what the first call actually persisted, unlike
+    /// reusing the same tracked context, which would find an added-but-unsaved row anyway.
+    /// </summary>
+    private PlaylistTransferOrchestrator CreateSut(string tempDirectory, AudioYotoShelfDbContext db) => new(
+        db, _absService.Object, _yotoService.Object,
         _iconService.Object, _chapterExtractor.Object,
         new TrackPlanner(new YotoCardLimits()), new CardCapacityCalculator(new YotoCardLimits()),
         new ConfigurationBuilder()
@@ -64,10 +72,15 @@ public partial class PlaylistTransferOrchestratorTests : IDisposable
     }
 
     private async Task<Guid> SeedPlaylistAsync(PlaylistStatus status = PlaylistStatus.Draft,
-        TrackGrouping grouping = TrackGrouping.Chapters, string username = "testuser", params PlaylistItem[] items)
+        TrackGrouping grouping = TrackGrouping.Chapters, string username = "testuser",
+        UserConnection? existingUser = null, params PlaylistItem[] items)
     {
-        var user = TestData.CreateUserConnection(username: username);
-        _fixture.DbContext.UserConnections.Add(user);
+        var user = existingUser;
+        if (user is null)
+        {
+            user = TestData.CreateUserConnection(username: username);
+            _fixture.DbContext.UserConnections.Add(user);
+        }
 
         var playlist = new Playlist
         {
