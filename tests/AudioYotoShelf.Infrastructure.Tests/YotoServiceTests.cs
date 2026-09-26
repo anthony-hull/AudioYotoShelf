@@ -879,7 +879,11 @@ public class YotoServiceTests
         // Confirmed live 2026-09-26: multipart returns 400 "A binary image file is required" even
         // for a real, valid image; a raw body with Content-Type: image/png succeeds, same shape as
         // the cover endpoint. Every icon upload had silently failed since this feature was written.
-        _handler.Enqueue(HttpStatusCode.OK, """{"mediaId":"icon-1","url":"https://i.example/icon-1.png"}""");
+        // The response body is nested under "displayIcon" (confirmed live) — not the flat
+        // { mediaId, url } shape this test used to assume, which is exactly what let a null
+        // MediaId slip through and fail card creation with "must be 43 characters" for every icon.
+        _handler.Enqueue(HttpStatusCode.OK,
+            """{"displayIcon":{"mediaId":"icon-1","userId":"u1","displayIconId":"d1","url":"https://i.example/icon-1.png"}}""");
         byte[] icon = [0x89, 0x50, 0x4E, 0x47];
 
         var result = await CreateSut().UploadCustomIconAsync(Token, icon, "my icon.png");

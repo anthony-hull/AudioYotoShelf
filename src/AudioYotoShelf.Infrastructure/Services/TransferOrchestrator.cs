@@ -574,23 +574,27 @@ public class TransferOrchestrator(
                 var iconBytes = cachedBytes ?? await iconService.GenerateChapterIconAsync(
                     mapping.ChapterTitle, bookTitle, primaryGenre, ct);
 
-                var iconUpload = await yotoService.UploadCustomIconAsync(
-                    yotoAccessToken, iconBytes, $"ch{i}_{mapping.ChapterTitle[..Math.Min(20, mapping.ChapterTitle.Length)]}.png", ct);
-
+                // Tracked (and persisted by this method's own SaveChangesAsync below) with just the
+                // pixels first — Gemini, if it ran, is already paid for, so an upload failure must
+                // not force paying for it again on retry. The Yoto reference is filled in only once
+                // the upload actually succeeds.
                 var icon = new GeneratedIcon
                 {
                     UserConnectionId = user.Id,
                     Prompt = prompt,
                     ContextTitle = $"{bookTitle} - {mapping.ChapterTitle}",
                     Source = IconSource.GeminiGenerated,
-                    YotoMediaId = iconUpload.MediaId,
-                    YotoIconUrl = iconUpload.Url,
                     IconData = iconBytes,
                     ContentHash = contentHash,
                     TimesUsed = 1
                 };
-
                 db.GeneratedIcons.Add(icon);
+
+                var iconUpload = await yotoService.UploadCustomIconAsync(
+                    yotoAccessToken, iconBytes, $"ch{i}_{mapping.ChapterTitle[..Math.Min(20, mapping.ChapterTitle.Length)]}.png", ct);
+
+                icon.YotoMediaId = iconUpload.MediaId;
+                icon.YotoIconUrl = iconUpload.Url;
                 mapping.GeneratedIconId = icon.Id;
                 chapterIcons[i] = $"yoto:#{iconUpload.MediaId}";
                 iconsByHash[contentHash] = icon;
