@@ -551,6 +551,41 @@ public partial class PlaylistTransferOrchestratorTests
     }
 
     [Fact]
+    public async Task TransferPlaylist_IconUploadFailsAfterGeminiSucceeds_StillPersistsTheBytesForARetry()
+    {
+        // Gemini is the expensive, paid step. An upload failure afterwards (network blip, Yoto
+        // hiccup, a bad response — anything) must not discard pixels already paid for. The book
+        // is left without an icon, but the playlist transfer as a whole still completes.
+        var media = TestData.CreateAbsMedia(
+            TestData.CreateAbsMetadata(genres: ["Fantasy"]),
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-a", 100)], chapters: []);
+        SetupBook("book-1", media);
+        SetupBook("book-2", media);
+        var uploadAttempts = 0;
+        _yotoService.Setup(s => s.UploadCustomIconAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++uploadAttempts == 1
+                ? Task.FromException<YotoIconUploadResponse>(new HttpRequestException("upload failed"))
+                : Task.FromResult(TestData.CreateYotoIconUpload()));
+
+        var firstPlaylist = await SeedPlaylistAsync(items: [Item("book-1", 0, "Same Book", [100])]);
+        await _sut.TransferPlaylistAsync(firstPlaylist);
+
+        var playlist = await _fixture.DbContext.Playlists.FirstAsync(p => p.Id == firstPlaylist);
+        playlist.Status.Should().Be(PlaylistStatus.Transferred, "a failed icon must not fail the whole transfer");
+        var stored = await _fixture.DbContext.GeneratedIcons.SingleAsync();
+        stored.IconData.Should().NotBeNull("the pixels must survive the failed upload");
+        stored.YotoMediaId.Should().BeNull();
+
+        var secondPlaylist = await SeedPlaylistAsync(items: [Item("book-2", 0, "Same Book", [100])]);
+        await _sut.TransferPlaylistAsync(secondPlaylist);
+
+        _iconService.Verify(s => s.GenerateChapterIconAsync(
+            "Same Book", "Same Book", "Fantasy", It.IsAny<CancellationToken>()),
+            Times.Once(), "the second attempt should reuse the persisted bytes, not pay Gemini again");
+    }
+
+    [Fact]
     public async Task TransferPlaylist_ShortTitle_IsUsedWholeForTheIconFileName()
     {
         var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,

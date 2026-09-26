@@ -674,6 +674,33 @@ public partial class TransferOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TransferBookAsync_UploadFailsAfterGeminiSucceeds_StillPersistsTheBytesForARetry()
+    {
+        // Gemini is the expensive, paid step. An upload failure afterwards (network blip, Yoto
+        // hiccup, a bad response — anything) must not discard pixels already paid for.
+        var user = await SeedUserAsync();
+        ServeItem("book-a");
+        var uploadAttempts = 0;
+        _yotoService.Setup(s => s.UploadCustomIconAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(() => ++uploadAttempts == 1
+                ? Task.FromException<YotoIconUploadResponse>(new HttpRequestException("upload failed"))
+                : Task.FromResult(TestData.CreateYotoIconUpload()));
+
+        await TransferAsync(user, "book-a");   // upload throws; chapter left without an icon, transfer still completes
+
+        var stored = await _db.GeneratedIcons.SingleAsync();
+        stored.IconData.Should().NotBeNull("the pixels must survive the failed upload");
+        stored.YotoMediaId.Should().BeNull();
+
+        ServeItem("book-b"); // same chapter title/genre as book-a => identical content hash
+        await TransferAsync(user, "book-b");
+
+        // The second attempt should reuse the persisted bytes, not pay Gemini again.
+        VerifyIconGenerations("Chapter 1", Times.Once());
+    }
+
+    [Fact]
     public async Task TransferBookAsync_ADifferentChapterTitle_GetsANewIconEvenForTheSameUser()
     {
         var user = await SeedUserAsync();

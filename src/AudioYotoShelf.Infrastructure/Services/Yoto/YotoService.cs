@@ -459,8 +459,25 @@ public class YotoService(
             $"/media/displayIcons/user/me/upload?autoConvert=true&filename={Uri.EscapeDataString(filename)}", content, ct);
         response.EnsureSuccessStatusCode();
 
-        return await response.Content.ReadFromJsonAsync<YotoIconUploadResponse>(ct)
-            ?? throw new InvalidOperationException("Failed to upload custom icon");
+        // The response nests mediaId/url under "displayIcon" (confirmed live) — a flat
+        // { mediaId, url } deserialization target silently comes back null (no exception; a JSON
+        // string property simply has no runtime null-check), which then fails card creation with
+        // "icon16x16 must be in format \"yoto:#{mediaId}\" where mediaId is 43 characters" for
+        // every chapter, since "yoto:#" with nothing after it doesn't match.
+        var json = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var node = root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty("displayIcon", out var wrapped) && wrapped.ValueKind == JsonValueKind.Object
+            ? wrapped
+            : root;
+
+        var mediaId = node.ValueKind == JsonValueKind.Object && node.TryGetProperty("mediaId", out var m) ? m.GetString() : null;
+        var url = node.ValueKind == JsonValueKind.Object && node.TryGetProperty("url", out var u) ? u.GetString() : null;
+
+        return mediaId is not null && url is not null
+            ? new YotoIconUploadResponse(mediaId, url)
+            : throw new InvalidOperationException("Failed to upload custom icon");
     }
 
     // --- Cover ---

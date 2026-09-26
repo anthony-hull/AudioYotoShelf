@@ -305,25 +305,29 @@ public class PlaylistTransferOrchestrator(
                 logger.LogInformation("Reusing a cached icon for book '{Title}' — no Gemini call", bookTitle);
             var iconBytes = cachedBytes ?? await iconService.GenerateChapterIconAsync(bookTitle, bookTitle, genre, ct);
 
-            var safeName = bookTitle[..Math.Min(20, bookTitle.Length)];
-            var upload = await yotoService.UploadCustomIconAsync(yotoToken, iconBytes, $"{safeName}.png", ct);
-
-            db.GeneratedIcons.Add(new GeneratedIcon
+            // Tracked before the upload — Gemini, if it ran, is already paid for, so an upload
+            // failure (caught below) must not force paying for it again on retry. Not saved here:
+            // TransferPlaylistAsync's own SaveChangesAsync (success at line ~119, failure in the
+            // catch below it) always runs after this method returns, and a query later in the same
+            // run (another book sharing this prompt) needs this Added-but-unsaved icon to already be
+            // visible on this DbContext regardless.
+            var icon = new GeneratedIcon
             {
                 UserConnectionId = user.Id,
                 Prompt = prompt,
                 ContextTitle = bookTitle,
                 Source = IconSource.GeminiGenerated,
-                YotoMediaId = upload.MediaId,
-                YotoIconUrl = upload.Url,
                 IconData = iconBytes,
                 ContentHash = contentHash,
                 TimesUsed = 1
-            });
-            // Not saved here — TransferPlaylistAsync's own SaveChangesAsync (success at line ~119,
-            // failure in the catch below it) always runs after this returns, and a query later in
-            // the same run (another book sharing this prompt) needs this Added-but-unsaved icon to
-            // already be visible on this DbContext regardless.
+            };
+            db.GeneratedIcons.Add(icon);
+
+            var safeName = bookTitle[..Math.Min(20, bookTitle.Length)];
+            var upload = await yotoService.UploadCustomIconAsync(yotoToken, iconBytes, $"{safeName}.png", ct);
+
+            icon.YotoMediaId = upload.MediaId;
+            icon.YotoIconUrl = upload.Url;
 
             return $"yoto:#{upload.MediaId}";
         }
