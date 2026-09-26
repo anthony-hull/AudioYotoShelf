@@ -400,6 +400,32 @@ public partial class PlaylistTransferOrchestratorTests
     }
 
     [Fact]
+    public async Task TransferPlaylist_AnotherUsersIdenticalBookIcon_ReusesThePixelsWithoutCallingGeminiAgain()
+    {
+        // Yoto media references are account-scoped (can't reuse the first user's yoto:#id), so the
+        // second user's playlist still needs its own upload — but Gemini's output for the same book
+        // title and genre is identical work, and paying for it twice is pure waste.
+        var media = TestData.CreateAbsMedia(
+            TestData.CreateAbsMetadata(genres: ["Fantasy"]),
+            audioFiles: [TestData.CreateAbsAudioFile(0, "ino-a", 100)], chapters: []);
+        SetupBook("book-1", media);
+
+        var firstPlaylist = await SeedPlaylistAsync(username: "first",
+            items: [Item("book-1", 0, "Same Book", [100])]);
+        await _sut.TransferPlaylistAsync(firstPlaylist);
+
+        var secondPlaylist = await SeedPlaylistAsync(username: "second",
+            items: [Item("book-1", 0, "Same Book", [100])]);
+        await _sut.TransferPlaylistAsync(secondPlaylist);
+
+        _iconService.Verify(s => s.GenerateChapterIconAsync(
+            "Same Book", "Same Book", "Fantasy", It.IsAny<CancellationToken>()), Times.Once);
+        _yotoService.Verify(s => s.UploadCustomIconAsync(
+            It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        TempDirShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task TransferPlaylist_ShortTitle_IsUsedWholeForTheIconFileName()
     {
         var playlistId = await SeedPlaylistAsync(grouping: TrackGrouping.Chapters,

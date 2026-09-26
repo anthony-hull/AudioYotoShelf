@@ -140,7 +140,7 @@ public class PlaylistTransferOrchestrator(
         TrackGrouping grouping, string yotoToken, int chapterIndex, List<string> temp, CancellationToken ct)
     {
         var baseTracks = await ProduceBaseTracksAsync(user, libraryItem, media, bookTitle, grouping, temp, ct);
-        var iconRef = await GenerateBookIconAsync(yotoToken, bookTitle, media.Metadata.Genres?.FirstOrDefault(), ct);
+        var iconRef = await GenerateBookIconAsync(user, yotoToken, bookTitle, media.Metadata.Genres?.FirstOrDefault(), ct);
         var display = iconRef is not null ? new YotoDisplay(iconRef) : null;
 
         var yotoTracks = new List<YotoTrack>();
@@ -270,14 +270,58 @@ public class PlaylistTransferOrchestrator(
         }
     }
 
-    /// <summary>Returns a yoto:#{mediaId} display reference for the book, or null if generation fails.</summary>
-    private async Task<string?> GenerateBookIconAsync(string yotoToken, string bookTitle, string? genre, CancellationToken ct)
+    /// <summary>
+    /// Returns a yoto:#{mediaId} display reference for the book, or null if generation fails.
+    /// Reuses this user's own icon directly when one exists; otherwise reuses any cached pixels for
+    /// the same prompt (from this user, another user, or the per-chapter transfer path) before
+    /// paying for a fresh Gemini generation — a Yoto media reference is account-scoped, but Gemini's
+    /// output for identical input is not.
+    /// </summary>
+    private async Task<string?> GenerateBookIconAsync(
+        UserConnection user, string yotoToken, string bookTitle, string? genre, CancellationToken ct)
     {
+        var prompt = iconService.BuildChapterIconPrompt(bookTitle, bookTitle, genre);
+        var contentHash = ContentHasher.Compute(prompt);
+
         try
         {
-            var iconBytes = await iconService.GenerateChapterIconAsync(bookTitle, bookTitle, genre, ct);
+            var existing = await db.GeneratedIcons
+                .FirstOrDefaultAsync(g => g.UserConnectionId == user.Id &&
+                                          g.ContentHash == contentHash &&
+                                          g.YotoMediaId != null, ct);
+            if (existing is not null)
+            {
+                existing.TimesUsed++;
+                await db.SaveChangesAsync(ct);
+                return $"yoto:#{existing.YotoMediaId}";
+            }
+
+            var cachedBytes = await db.GeneratedIcons
+                .Where(g => g.ContentHash == contentHash && g.IconData != null)
+                .OrderByDescending(g => g.CreatedAt)
+                .Select(g => g.IconData)
+                .FirstOrDefaultAsync(ct);
+            if (cachedBytes is not null)
+                logger.LogInformation("Reusing a cached icon for book '{Title}' — no Gemini call", bookTitle);
+            var iconBytes = cachedBytes ?? await iconService.GenerateChapterIconAsync(bookTitle, bookTitle, genre, ct);
+
             var safeName = bookTitle[..Math.Min(20, bookTitle.Length)];
             var upload = await yotoService.UploadCustomIconAsync(yotoToken, iconBytes, $"{safeName}.png", ct);
+
+            db.GeneratedIcons.Add(new GeneratedIcon
+            {
+                UserConnectionId = user.Id,
+                Prompt = prompt,
+                ContextTitle = bookTitle,
+                Source = IconSource.GeminiGenerated,
+                YotoMediaId = upload.MediaId,
+                YotoIconUrl = upload.Url,
+                IconData = iconBytes,
+                ContentHash = contentHash,
+                TimesUsed = 1
+            });
+            await db.SaveChangesAsync(ct);
+
             return $"yoto:#{upload.MediaId}";
         }
         catch (Exception ex)

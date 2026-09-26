@@ -537,7 +537,7 @@ public class TransferOrchestrator(
         {
             var mapping = mappings[i];
             var prompt = iconService.BuildChapterIconPrompt(mapping.ChapterTitle, bookTitle, primaryGenre);
-            var contentHash = ComputeContentHash(prompt);
+            var contentHash = ContentHasher.Compute(prompt);
 
             try
             {
@@ -564,7 +564,13 @@ public class TransferOrchestrator(
                     continue;
                 }
 
-                var iconBytes = await iconService.GenerateChapterIconAsync(
+                // Same content, different account — Yoto media is account-scoped so this user still
+                // needs their own upload, but Gemini's output for identical input is reusable, so
+                // check for anyone else's cached pixels before paying for a fresh generation.
+                var cachedBytes = await FindCachedIconBytesAsync(contentHash, ct);
+                if (cachedBytes is not null)
+                    logger.LogInformation("Reusing a cached icon for {Chapter} — no Gemini call", mapping.ChapterTitle);
+                var iconBytes = cachedBytes ?? await iconService.GenerateChapterIconAsync(
                     mapping.ChapterTitle, bookTitle, primaryGenre, ct);
 
                 var iconUpload = await yotoService.UploadCustomIconAsync(
@@ -578,6 +584,7 @@ public class TransferOrchestrator(
                     Source = IconSource.GeminiGenerated,
                     YotoMediaId = iconUpload.MediaId,
                     YotoIconUrl = iconUpload.Url,
+                    IconData = iconBytes,
                     ContentHash = contentHash,
                     TimesUsed = 1
                 };
@@ -599,6 +606,18 @@ public class TransferOrchestrator(
         await db.SaveChangesAsync(ct);
         return chapterIcons;
     }
+
+    /// <summary>
+    /// The most recently cached pixels for this exact prompt, generated for any user. Gemini's
+    /// output for identical input (same chapter title, book title and genre) is reusable even though
+    /// the resulting Yoto upload isn't — that's what makes this worth checking before generating.
+    /// </summary>
+    private async Task<byte[]?> FindCachedIconBytesAsync(string contentHash, CancellationToken ct) =>
+        await db.GeneratedIcons
+            .Where(g => g.ContentHash == contentHash && g.IconData != null)
+            .OrderByDescending(g => g.CreatedAt)
+            .Select(g => g.IconData)
+            .FirstOrDefaultAsync(ct);
 
     internal async Task<string> CreateYotoCardAsync(
         string yotoAccessToken, CardTransfer transfer, AbsBookMetadata metadata,
@@ -799,12 +818,6 @@ public class TransferOrchestrator(
                 logger.LogWarning(ex, "Failed to delete temp file {File}", path);
             }
         }
-    }
-
-    private static string ComputeContentHash(string input)
-    {
-        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexStringLower(bytes);
     }
 
     /// <summary>
