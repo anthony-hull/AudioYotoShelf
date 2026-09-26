@@ -464,6 +464,12 @@ public class YotoService(
         // string property simply has no runtime null-check), which then fails card creation with
         // "icon16x16 must be in format \"yoto:#{mediaId}\" where mediaId is 43 characters" for
         // every chapter, since "yoto:#" with nothing after it doesn't match.
+        //
+        // "url" is unreliable: confirmed live 2026-09-26 it can come back as "{}" (an empty
+        // object) rather than a string, presumably while autoConvert is still processing. Reading
+        // it with GetString() then throws InvalidOperationException instead of returning null,
+        // which — unlike a genuinely missing mediaId — must not fail the upload: mediaId is the
+        // only thing card creation needs (icon16x16 = "yoto:#{mediaId}"), url is display-only.
         var json = await response.Content.ReadAsStringAsync(ct);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -473,9 +479,12 @@ public class YotoService(
             : root;
 
         var mediaId = node.ValueKind == JsonValueKind.Object && node.TryGetProperty("mediaId", out var m) ? m.GetString() : null;
-        var url = node.ValueKind == JsonValueKind.Object && node.TryGetProperty("url", out var u) ? u.GetString() : null;
+        var url = node.ValueKind == JsonValueKind.Object
+            && node.TryGetProperty("url", out var u) && u.ValueKind == JsonValueKind.String
+            ? u.GetString()
+            : null;
 
-        return mediaId is not null && url is not null
+        return mediaId is not null
             ? new YotoIconUploadResponse(mediaId, url)
             : throw new InvalidOperationException("Failed to upload custom icon");
     }
