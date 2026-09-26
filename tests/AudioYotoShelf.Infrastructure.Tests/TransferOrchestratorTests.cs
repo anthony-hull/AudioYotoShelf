@@ -293,11 +293,13 @@ public class TransferOrchestratorTests : IDisposable
     [Fact]
     public async Task TransferBookAsync_GeneratesIconForEachChapter()
     {
+        // Audiobookshelf's AudioFile.Index is 1-based (confirmed live against a real book) —
+        // file 1 is the first file, and lines up with chapters[0].
         var user = await SeedUserAsync();
         var audioFiles = new[]
         {
-            TestData.CreateAbsAudioFile(0, "ino-1"),
-            TestData.CreateAbsAudioFile(1, "ino-2")
+            TestData.CreateAbsAudioFile(1, "ino-1"),
+            TestData.CreateAbsAudioFile(2, "ino-2")
         };
         var chapters = new[]
         {

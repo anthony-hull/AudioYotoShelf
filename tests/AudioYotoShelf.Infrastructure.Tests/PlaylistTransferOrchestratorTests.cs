@@ -126,6 +126,45 @@ public class PlaylistTransferOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task TransferPlaylist_MultiFileBook_TitlesEachTrackFromTheMatchingChapter()
+    {
+        // Audiobookshelf's AudioFile.Index is 1-based (confirmed live against a real book) —
+        // file 1 is the first file, and lines up with chapters[0].
+        YotoCardContent? captured = null;
+        _yotoService.Setup(s => s.CreateOrUpdateCardAsync(
+                It.IsAny<string>(), It.IsAny<YotoCardContent>(), It.IsAny<YotoCardMetadata>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, YotoCardContent, YotoCardMetadata, string?, string?, CancellationToken>(
+                (_, content, _, _, _, _) => captured = content)
+            .ReturnsAsync("card-abc");
+
+        var playlistId = await SeedPlaylistAsync(
+            grouping: TrackGrouping.Chapters,
+            items:
+            [
+                new PlaylistItem { AbsLibraryItemId = "book-1", Position = 0, BookTitle = "Book 1",
+                    TrackDurations = [300, 300], TrackBytes = [1_000_000, 1_000_000] },
+            ]);
+        SetupBook("book-1", TestData.CreateAbsMedia(
+            audioFiles:
+            [
+                TestData.CreateAbsAudioFile(1, "ino-1", duration: 300),
+                TestData.CreateAbsAudioFile(2, "ino-2", duration: 300),
+            ],
+            chapters:
+            [
+                TestData.CreateAbsChapter(0, "The Boy Who Lived", 0, 300),
+                TestData.CreateAbsChapter(1, "The Vanishing Glass", 300, 600),
+            ]));
+
+        await _sut.TransferPlaylistAsync(playlistId);
+
+        captured.Should().NotBeNull();
+        captured!.Chapters.Single().Tracks.Select(t => t.Title)
+            .Should().Equal("The Boy Who Lived", "The Vanishing Glass");
+    }
+
+    [Fact]
     public async Task TransferPlaylist_OverCapacity_FailsWithoutBuildingCard()
     {
         var playlistId = await SeedPlaylistAsync(

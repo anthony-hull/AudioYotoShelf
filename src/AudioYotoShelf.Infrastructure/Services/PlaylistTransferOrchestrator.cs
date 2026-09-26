@@ -4,6 +4,7 @@ using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
+using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -209,7 +210,7 @@ public class PlaylistTransferOrchestrator(
             foreach (var f in files)
             {
                 var path = await DownloadToTempAsync(user, libraryItem.Id, f, temp, ct);
-                var title = media.Chapters.Length > f.Index ? media.Chapters[f.Index].Title : f.Metadata.Filename;
+                var title = ChapterTitleResolver.ForFile(media.Chapters, f);
                 result.Add(new LocalTrack(path, f.Duration, title));
             }
             return result;

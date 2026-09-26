@@ -4,6 +4,7 @@ using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
+using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Infrastructure.Data;
 using AudioYotoShelf.Infrastructure.Observability;
 using Microsoft.EntityFrameworkCore;
@@ -301,9 +302,7 @@ public class TransferOrchestrator(
             // Multi-file book: each audio file = one track
             foreach (var audioFile in media.AudioFiles.OrderBy(f => f.Index))
             {
-                var chapterTitle = media.Chapters.Length > audioFile.Index
-                    ? media.Chapters[audioFile.Index].Title
-                    : audioFile.Metadata.Filename;
+                var chapterTitle = ChapterTitleResolver.ForFile(media.Chapters, audioFile);
 
                 var mapping = new TrackMapping
                 {
