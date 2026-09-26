@@ -133,6 +133,26 @@ public class GeminiIconGenerationBehaviourTests
         config.GetProperty("responseMimeType").GetString().Should().Be("text/plain");
         config.GetProperty("responseModalities").EnumerateArray().Select(m => m.GetString())
             .Should().Equal("TEXT", "IMAGE");
+        config.GetProperty("imageConfig").GetProperty("imageSize").GetString().Should().Be("512");
+    }
+
+    [Fact]
+    public async Task GenerateIcon_WithConfiguredImageSize_RequestsThatSize()
+    {
+        // Confirmed live 2026-09-26: "2K"/"4K" are real, honored values too — larger source
+        // resolution isn't useful for a 16x16 icon (see the "512" default's own comment), but the
+        // setting must still reach the request for anyone who overrides it.
+        var h = Create(settings: new Dictionary<string, string?>
+        {
+            ["Gemini:ApiKey"] = "k1",
+            ["Gemini:ImageSize"] = "2K",
+        });
+
+        await h.Sut.GenerateIconAsync("a cat");
+
+        using var body = JsonDocument.Parse(h.Handler.Requests.Single().Body);
+        body.RootElement.GetProperty("generationConfig").GetProperty("imageConfig")
+            .GetProperty("imageSize").GetString().Should().Be("2K");
     }
 
     [Fact]

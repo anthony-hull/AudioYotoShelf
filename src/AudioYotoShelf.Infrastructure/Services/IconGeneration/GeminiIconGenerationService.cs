@@ -25,6 +25,14 @@ public class GeminiIconGenerationService(
         ?? throw new InvalidOperationException("Gemini:ApiKey not configured");
     private string Model => configuration.GetValue("Gemini:Model", "gemini-3.1-flash-image")!;
 
+    // Confirmed live 2026-09-26: "512" is a real, honored value (the 400 for an invalid one lists
+    // the full accepted set: 1K, 2K, 4K, 512, 512P, 512PX) and genuinely halves the returned image's
+    // dimensions (704x384 vs 1408x768 for the unset default). It's also the cheapest Gemini pricing
+    // tier ($0.045/image vs $0.067 for the 1K default). The icon pipeline immediately downsamples
+    // to 16x16 anyway, so the extra native resolution was paying for detail that only made the
+    // final shrink noisier, never better — smaller source, cheaper AND cleaner output.
+    private string ImageSize => configuration.GetValue("Gemini:ImageSize", "512")!;
+
     public virtual async Task<byte[]> GenerateIconAsync(string prompt, CancellationToken ct = default)
     {
         logger.LogInformation("Generating icon via Gemini: {Prompt}", prompt);
@@ -44,7 +52,8 @@ public class GeminiIconGenerationService(
             GenerationConfig = new GeminiGenerationConfig
             {
                 ResponseMimeType = "text/plain",
-                ResponseModalities = ["TEXT", "IMAGE"]
+                ResponseModalities = ["TEXT", "IMAGE"],
+                ImageConfig = new GeminiImageConfig { ImageSize = ImageSize }
             }
         };
 
@@ -224,6 +233,15 @@ file record GeminiGenerationConfig
 
     [JsonPropertyName("responseModalities")]
     public string[]? ResponseModalities { get; init; }
+
+    [JsonPropertyName("imageConfig")]
+    public GeminiImageConfig? ImageConfig { get; init; }
+}
+
+file record GeminiImageConfig
+{
+    [JsonPropertyName("imageSize")]
+    public string? ImageSize { get; init; }
 }
 
 file record GeminiResponse
