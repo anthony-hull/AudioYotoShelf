@@ -874,8 +874,11 @@ public class YotoServiceTests
     }
 
     [Fact]
-    public async Task UploadCustomIconAsync_PostsTheIconAsMultipartWithTheEscapedFilename()
+    public async Task UploadCustomIconAsync_PostsTheRawBytesAsPngWithTheEscapedFilename()
     {
+        // Confirmed live 2026-09-26: multipart returns 400 "A binary image file is required" even
+        // for a real, valid image; a raw body with Content-Type: image/png succeeds, same shape as
+        // the cover endpoint. Every icon upload had silently failed since this feature was written.
         _handler.Enqueue(HttpStatusCode.OK, """{"mediaId":"icon-1","url":"https://i.example/icon-1.png"}""");
         byte[] icon = [0x89, 0x50, 0x4E, 0x47];
 
@@ -885,9 +888,8 @@ public class YotoServiceTests
         request.Method.Should().Be(HttpMethod.Post);
         request.Uri.Should().Be($"{ApiBase}/media/displayIcons/user/me/upload?autoConvert=true&filename=my%20icon.png");
         request.Authorization.Should().Be($"Bearer {Token}");
-        request.ContentType.Should().StartWith("multipart/form-data");
-        request.BodyText.Should().Contain("name=file").And.Contain("my icon.png");
-        request.Body.Should().ContainInConsecutiveOrder(icon);
+        request.ContentType.Should().Be("image/png");
+        request.Body.Should().Equal(icon);
         result.Should().Be(new YotoIconUploadResponse("icon-1", "https://i.example/icon-1.png"));
     }
 

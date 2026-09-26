@@ -445,11 +445,18 @@ public class YotoService(
         string accessToken, byte[] iconData, string filename, CancellationToken ct = default)
     {
         using var client = CreateApiClient(accessToken);
-        using var formContent = new MultipartFormDataContent();
-        formContent.Add(new ByteArrayContent(iconData), "file", filename);
+
+        // The icon endpoint wants the raw image bytes as the request body, same shape as the cover
+        // endpoint — not multipart. Confirmed live 2026-09-26: a multipart "file" part (what this
+        // used to send) gets a 400 "A binary image file is required" even for a real, valid image;
+        // a raw body with Content-Type: image/png succeeds. Every icon upload had been failing
+        // silently since this feature was written (caught by the caller, chapter left without an
+        // icon) — the icon pipeline always produces PNG (ResizeTo16X16 -> SaveAsPng).
+        using var content = new ByteArrayContent(iconData);
+        content.Headers.ContentType = new MediaTypeHeaderValue("image/png");
 
         var response = await client.PostAsync(
-            $"/media/displayIcons/user/me/upload?autoConvert=true&filename={Uri.EscapeDataString(filename)}", formContent, ct);
+            $"/media/displayIcons/user/me/upload?autoConvert=true&filename={Uri.EscapeDataString(filename)}", content, ct);
         response.EnsureSuccessStatusCode();
 
         return await response.Content.ReadFromJsonAsync<YotoIconUploadResponse>(ct)
