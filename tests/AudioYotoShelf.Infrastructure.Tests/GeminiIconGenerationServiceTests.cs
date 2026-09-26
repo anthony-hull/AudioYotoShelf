@@ -84,6 +84,19 @@ public class GeminiIconGenerationServiceTests
             .And.Contain("LED");
     }
 
+    [Fact]
+    public void BuildChapterIconPrompt_DemandsAnOpaqueBackgroundAndFlatColors()
+    {
+        // Confirmed live 2026-09-26 against the actual 16x16 output (not the zoomed editor
+        // preview): a transparent background produces anti-aliased edge pixels that resize into
+        // scattered noise, and gradients/shading don't survive the shrink either — this is what
+        // made generated icons unreadable next to Yoto's own flat, high-contrast built-ins.
+        var prompt = _sut.BuildChapterIconPrompt("Chapter 1", "Test", null);
+        prompt.Should().Contain("not transparent");
+        prompt.Should().Contain("no gradients");
+        prompt.Should().Contain("single-subject");
+    }
+
     // =========================================================================
     // SearchPublicIconsAsync (in-memory cache behavior)
     // =========================================================================
