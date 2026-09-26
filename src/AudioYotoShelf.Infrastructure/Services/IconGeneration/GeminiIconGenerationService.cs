@@ -124,11 +124,23 @@ public class GeminiIconGenerationService(
 
     public virtual string BuildChapterIconPrompt(string chapterTitle, string bookTitle, string? genre)
     {
+        // Confirmed live 2026-09-26: a detailed/shaded source image looks fine at Gemini's native
+        // resolution but turns to noise once nearest-neighbor-resized to the real 16x16 — a
+        // transparent background gets anti-aliased edge pixels that land at random alpha values
+        // when sampled down, and fine shading/gradients don't survive either. Comparing against
+        // Yoto's own built-in icons (flat, single-subject, high-contrast) and re-testing the actual
+        // 16x16 output (not the zoomed-in editor preview) is what caught this — the old wording
+        // ("8-bit retro game sprite", "6-8 bright colors") still let Gemini render something too
+        // fine-grained to survive the shrink.
         var genreHint = genre is not null ? $" The genre is {genre}." : "";
         return $"Create a 16x16 pixel art icon representing \"{chapterTitle}\" " +
                $"from the book \"{bookTitle}\".{genreHint} " +
-               "Use simple shapes, limited color palette (6-8 bright colors), bold outlines. " +
-               "Style: 8-bit retro game sprite. No text. No black background. " +
+               "Use simple shapes, limited color palette (4-5 solid, high-contrast colors, no gradients, " +
+               "no shading, no anti-aliasing). Style: flat, bold, single-subject icon like a tiny app icon " +
+               "or emoji — one clear silhouette centered on a plain, opaque, single-color background (not " +
+               "transparent). No fine detail, no small elements, no background scenery. Every shape must " +
+               "be large and blocky enough to still read clearly after being shrunk to a 16x16 pixel grid. " +
+               "Thick outlines. No text. No black background. " +
                "Avoid using pure black (#000000) pixels as they appear as 'off' on LED displays.";
     }
 
