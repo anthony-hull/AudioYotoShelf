@@ -4,6 +4,7 @@ using AudioYotoShelf.Core.DTOs.Yoto;
 using AudioYotoShelf.Core.Entities;
 using AudioYotoShelf.Core.Enums;
 using AudioYotoShelf.Core.Interfaces;
+using AudioYotoShelf.Core.Services;
 using AudioYotoShelf.Core.Tests.Helpers;
 using AudioYotoShelf.Infrastructure.Data;
 using AudioYotoShelf.Infrastructure.Observability;
@@ -632,6 +633,44 @@ public partial class TransferOrchestratorTests : IDisposable
         var icons = await _db.GeneratedIcons.ToListAsync();
         icons.Select(i => i.UserConnectionId).Distinct().Should().HaveCount(2);
         icons.Should().OnlyContain(i => i.IconData != null, "cached pixels are what let the next user skip Gemini");
+    }
+
+    [Fact]
+    public async Task TransferBookAsync_MultipleCachedIconsForTheSamePrompt_UsesTheMostRecentOnesBytes()
+    {
+        var wantedHash = ContentHasher.Compute("prompt: Chapter 1");
+        var other = await SeedUserAsync("other");
+        byte[] olderBytes = [0x01], newerBytes = [0x02];
+        _db.GeneratedIcons.AddRange(
+            new GeneratedIcon
+            {
+                UserConnectionId = other.Id,
+                Prompt = "x",
+                ContextTitle = "x",
+                ContentHash = wantedHash,
+                IconData = olderBytes,
+                CreatedAt = DateTimeOffset.UtcNow.AddDays(-1),
+            },
+            new GeneratedIcon
+            {
+                UserConnectionId = other.Id,
+                Prompt = "x",
+                ContextTitle = "x",
+                ContentHash = wantedHash,
+                IconData = newerBytes,
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+        await _db.SaveChangesAsync();
+        var user = await SeedUserAsync();
+        ServeItem("book-a");
+
+        await TransferAsync(user, "book-a");
+
+        _yotoService.Invocations
+            .Where(i => i.Method.Name == nameof(IYotoService.UploadCustomIconAsync))
+            .Select(i => (byte[])i.Arguments[1])
+            .Should().ContainSingle().Which.Should().Equal(newerBytes);
+        VerifyIconGenerations("Chapter 1", Times.Never());
     }
 
     [Fact]
